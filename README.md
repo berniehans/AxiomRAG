@@ -30,52 +30,52 @@ No se asume el rendimiento; se mide. Operamos auditorías automatizadas contra u
 ## 🌊 Arquitectura de Ingestión y Recuperación
 
 ```mermaid
-flowchart LR
+graph LR
     %% Definición de Estilos
-    classDef ingestion fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#01579b;
-    classDef retrieval fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#2e7d32;
-    classDef generation fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#ef6c00;
-    classDef eval fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#7b1fa2;
+    classDef ingestion fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    classDef retrieval fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef generation fill:#fff3e0,stroke:#ef6c00,stroke-width:2px;
+    classDef eval fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
-    subgraph Fase_Ingesta ["📦 INGESTA CRÍTICA (GPU)"]
+    subgraph Ingesta ["📦 FASE DE INGESTA (GPU)"]
         direction TB
-        A([📄 Docs: PDF/XLSX]) --> B[✂️ Semantic Chunking]
-        B --> C{Indexación Dual}
-        C --> D[(🗂️ Qdrant: Child Chunks)]
-        C --> E[(💾 LocalStore: Parent Docs)]
+        A["Documentos: PDF/XLSX"] --> B["Semantic Chunking"]
+        B --> C{"Indexación Dual"}
+        C --> D[("Qdrant: Child Chunks")]
+        C --> E[("LocalStore: Parent Docs")]
     end
 
-    subgraph Fase_Busqueda ["🔍 RECUPERACIÓN HÍBRIDA"]
+    subgraph Busqueda ["🔍 RECUPERACIÓN HÍBRIDA"]
         direction TB
-        F[❓ Query] --> G(Hybrid Search: BM25 + BGE-M3)
-        G --> H[⚖️ Re-Ranking: Cross-Encoder]
-        H --> I[🏆 Top 3 Gold Context]
+        F["User Query"] --> G["Hybrid Search: BM25 + Vector"]
+        G --> H["Re-Ranking: Cross-Encoder"]
+        H --> I["Top 3 Gold Context"]
     end
 
-    subgraph Fase_Gen ["🤖 GENERACIÓN & SEGURIDAD"]
+    subgraph Gen ["🤖 GENERACIÓN Y SEGURIDAD"]
         direction TB
-        I --> J[🧠 LLM: OpenRouter/Groq]
-        J --> K[🛡️ Guardrails: Score Check]
-        K --> L[✅ Respuesta Citada]
+        I --> J["LLM: OpenRouter/Groq"]
+        J --> K["Guardrails: Score Check"]
+        K --> L["Respuesta con Citaciones"]
     end
 
-    subgraph Fase_MLOps ["🧪 EVALUACIÓN & OBSERVABILIDAD"]
+    subgraph MLOps ["🧪 EVALUACIÓN Y CALIDAD"]
         direction TB
-        L --> M[📊 RAGAS Metrics]
-        M -- "Feedback Loop" --> G
-        M -- "Tuning" --> B
+        L --> M["RAGAS Metrics"]
+        M -. "Feedback Loop" .-> G
+        M -. "Tuning" .-> B
     end
 
-    %% Conexiones entre subgrafos
-    Fase_Ingesta -.-> Fase_Busqueda
-    Fase_Busqueda ==> Fase_Gen
-    Fase_Gen -.-> Fase_MLOps
+    %% Conexiones principales
+    Ingesta ==> Busqueda
+    Busqueda ==> Gen
+    Gen ==> MLOps
 
     %% Aplicación de Clases
-    class A,B,C,D,E ingestion;
-    class F,G,H,I retrieval;
-    class J,K,L generation;
-    class M eval;
+    class A,B,C,D,E Ingesta;
+    class F,G,H,I Busqueda;
+    class J,K,L Gen;
+    class M MLOps;
 ```
 
 ## 🏗️ Estructura del Código Fuente
