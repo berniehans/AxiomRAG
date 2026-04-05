@@ -31,15 +31,24 @@ No se asume el rendimiento; se mide. Operamos auditorías automatizadas contra u
 
 ```mermaid
 graph TD
-    DOC[Documento PDF Original] --> SC[Semantic Chunking]
-    SC --> Q[(Qdrant Vector DB - Hijos Chunks)]
-    SC --> LS[(Local Store - Padres Íntegros)]
-    
-    Q --> HR{Hybrid Retrieval BM25 + Vectores}
-    LS --> HR
-    HR --> RR[Reranker-v2 sobre CUDA 12.4]
-    RR -- "Score >= 0.15" --> LLM[LLM Engine]
-    LLM --> OUT[Respuesta Final]
+    subgraph Ingesta
+        A[Documentos PDF/XLSX] --> B(Semantic Chunking)
+        B --> C{Indexación Dual}
+        C --> D[(Qdrant: Chunks Hijos)]
+        C --> E[(LocalStore: Docs Padres)]
+    end
+
+    subgraph Recuperación
+        F[User Query] --> G(Hybrid Search: BM25 + Vector)
+        G --> H{Candidatos Top 10}
+        H --> I[BGE Reranker v2 - CUDA]
+        I --> J(Contexto de Oro Top 3)
+    end
+
+    subgraph Generación
+        J --> K[LLM Generation]
+        K --> L[Respuesta con Citaciones]
+    end
 ```
 
 ## 🏗️ Estructura del Código Fuente
