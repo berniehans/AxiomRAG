@@ -3,7 +3,7 @@ requires = ["hatchling>=1.21.1"]
 build-backend = "hatchling.build"
 
 [project]
-name = "rag-enterprise-ops"
+name = "AxiomRAG"
 version = "1.0.0"
 description = "Enterprise RAG MLOps with Hybrid Search and Reranking"
 readme = "README.md"
