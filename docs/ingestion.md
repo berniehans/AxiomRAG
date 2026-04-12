@@ -29,3 +29,24 @@ El framework atrapa automáticamente deserciones JSON generadas por el LLM media
 
 ### Inserción Local (LocalStorage / Qdrant)
 Los metadatos purificados se adhieren al Parent Document (al File Store `data/kv_store/`) permitiendo a futuro aplicar "Filtros Metadata" (ej. "Trae todo lo coincidente al tema X, *filtrado exclusivamente al contratista Y*").
+
+## 3. Flujo Lógico de Extracción
+
+```mermaid
+sequenceDiagram
+    participant Archivos
+    participant MultimodalParser
+    participant SemanticChunker
+    participant MetadataExtractor
+    participant VectorDB
+    
+    Archivos->>MultimodalParser: Batch PDF / Excel Corporativos
+    MultimodalParser->>SemanticChunker: Texto Crudo (MultiIdiomas auto-detectados)
+    SemanticChunker->>MetadataExtractor: Mapeo de Sub-Elementos
+    MetadataExtractor-->>LLM: with_structured_output (OpenRouter)
+    LLM-->>MetadataExtractor: Atributos Pydantic (Autor, Categoria, Resumen)
+    MetadataExtractor->>VectorDB: Ingesta Definitiva con Metadatos Aglomerados
+```
+
+### Hitos MLOps Claves adicionales:
+- **Robustez Multilingüe con Tesseract:** Al procesar mediante dependencias `unstructured`, la partición respeta el estándar `languages=["spa", "eng"]` evitando fallos nativos con contratos en Spanglish, o donde coexiste fuertemente literatura técnica en inglés.

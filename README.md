@@ -83,21 +83,25 @@ graph LR
 El diseño modular respeta el patrón de "Separation of Concerns" bajo tipado estricto `PEP 484`:
 
 ```text
-📦 RAG_Project
- ┣ 📂 scripts/        # Orquestadores ejecutivos (run_ingestion.py, run_evals.py)
+📦 AxiomRAG
+ ┣ 📂 docs/           # Base de conocimiento extendida de arquitectura y flujos.
+ ┣ 📂 scripts/        # Orquestadores ejecutivos MLOps (run_ingestion.py, test_retrieval.py).
  ┣ 📂 src/ 
- ┃ ┣ 📂 agent/        # Lógica conversacional, prompts restrictivos de no-alucinación.
- ┃ ┣ 📂 evals/        # Motor iterativo para Ragas evaluando métricas MLOps.
- ┃ ┣ 📂 ingestion/    # Modelos locales, Semantic Chunking, y parseo Pydantic global.
- ┃ ┣ 📂 retrieval/    # Ensamble avanzado: BM25, Qdrant Client, Cross-Encoders.
- ┃ ┗ 📜 main.py       # ASGI FastAPI Server, Gestión HW (empty_cache via lifespan).
- ┗ 📜 pyproject.toml  # Lock dependencies (uv) apuntando a index pytorch-cu124.
+ ┃ ┣ 📂 api/          # Endpoints de FastAPI Server.
+ ┃ ┣ 📂 agent/        # Lógica conversacional del Motor Generativo.
+ ┃ ┣ 📂 retrieval/    # Lógica core de búsqueda (BM25, Qdrant, Cross-Encoders).
+ ┃ ┣ 📂 services/     # Lógica de negocio encapsulada.
+ ┃ ┗ 📂 repositories/ # Acceso integrado a datos (PostgreSQL, LocalStore).
+ ┣ 📜 README.md       # Presentación e imagen principal del repositorio.
+ ┣ 📜 ARCHITECTURE.md # Detalles de diseño arquitectónico y diagramas.
+ ┣ 📜 tasks.md        # Roadmap operativo, Kanban y seguimiento de tareas.
+ ┣ 📜 agents.md       # Reglas unificadas y mapa cognitivo para Agentes MLOps.
+ ┣ 📜 main.py         # Punto de entrada ASGI, Gestión HW (empty_cache via lifespan).
+ ┗ 📜 pyproject.toml  # Dependencias nativas (uv) amarradas a GPU pytorch-cu124.
 ```
 
-## 🗺️ Roadmap de Producto
+## 🗺️ Roadmap y Tareas Pendientes
 
-Hitos de estabilización pendientes enfocados en escalar la IA a nivel Institucional:
+El desarrollo activo, seguimiento progresivo y los hitos de escalabilidad a nivel institucional se gestionan de manera centralizada en el archivo local de tareas.
 
-1. **Dockerización Nativa:** Despliegue empaquetado multi-stage soportando injecciones de driver NVIDIA Runtime Container Toolkit.
-2. **Telemetría de Red Local:** Instrumentación de logs sub-militamétricos separando el tiempo de procesamiento (Embeddings vs Híbrido vs Generación).
-3. **Chain-of-Thought (CoT):** Inyecciones de prompts ocultos forzando comprobaciones de razonamiento técnico en modelos locales Open-Source.
+> 👉 **Revisa el archivo [tasks.md](./tasks.md) para consultar el progreso, Backlog, requerimientos técnicos y pendientes activos de MLOps.**

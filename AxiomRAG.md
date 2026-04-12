@@ -15,53 +15,9 @@ Desarrollo de un motor de **Generación Aumentada por Recuperación (RAG)** aut�
 
 ---
 
-## 🏗️ Desglose de Hitos Técnicos
+## 🏗️ Desglose de Hitos Técnicos y Tareas Activas
 
-### Fase 1: Ingeniería de Ingesta Robusta 
-- [x] **Hito 1.1: Chunking Semántico Avanzado**
-  - Implementación de `SemanticChunker` basado en gradientes de significado para preservar la cohesión lógica de párrafos técnicos.
-- [x] **Hito 1.2: Extracción de Metadatos con Auto-Sanado**
-  - Uso de `Structured Output` (Pydantic) para categorizar documentos y generar resúmenes, con lógica de re-intento ante errores de parseo.
-- [x] **Hito 1.3: Embeddings de Alta Densidad**
-  - Despliegue de `BAAI/bge-m3` en GPU para representación vectorial de 1024 dimensiones sin latencia de API externa.
-
-### Fase 2: Ingeniería de Búsqueda Avanzada
-- [x] **Hito 2.1: Ensamble de Búsqueda Híbrida**
-  - Integración de Qdrant + BM25 (Léxico). Balance optimizado para capturar términos técnicos únicos (ej. "Retinex", "SSR").
-- [x] **Hito 2.2: Pipeline de Reranking (Cross-Encoders)**
-  - Implementación secuencial en VRAM para re-ordenar el Top-10 y entregar los 3 fragmentos de "oro" al LLM en < 0.5s.
-- [x] **Hito 2.3: Patrón Parent-Child Retrieval**
-  - Indexación de fragmentos "hijos" para precisión vectorial con restitución de documentos "padres" completos para contexto del LLM.
-
-### Fase 3: Lógica de Agente y Guardrails
-- [x] **Hito 3.1: Gestión de Sesiones Persistentes**
-  - Almacenamiento local de historial para mantener coherencia en conversaciones técnicas largas.
-- [x] **Hito 3.2: Generación Blindada (RAG Chain)**
-  - Prompt Engineering con instrucciones de citación estricta y prohibición de uso de conocimiento general.
-- [x] **Hito 3.3: Guardrail de Confianza (Thresholding)**
-  - Intercepción de logits del Reranker: Bloqueo de respuestas con score < 0.15 para mitigar alucinaciones de raíz.
-
-### Fase 4: Infraestructura y Alta Disponibilidad (En curso)
-- [x] **Hito 4.1: Motor de Ingesta Asíncrono**
-  - Uso de `FastAPI BackgroundTasks` para procesar PDFs masivos sin bloquear el ciclo de respuesta HTTP.
-- [ ] **Hito 4.2: Dockerización Industrial (NVIDIA Container)**
-  - Empaquetamiento multietapa con soporte nativo para `nvidia-container-toolkit` y drivers CUDA.
-- [ ] **Hito 4.3: Validación de Contratos (API Security)**
-  - Blindaje de endpoints con validaciones Pydantic estrictas para prevenir desbordamientos de VRAM.
-
-### Fase 5: MLOps y Observabilidad Local
-- [x] **Hito 5.1: Evaluación Cuantitativa con Ragas**
-  - Medición del Baseline inicial y generación de reportes `ragas_eval_metrics.json`.
-- [ ] **Hito 5.2: Telemetría y Profiling de Latencia**
-  - Implementación de logs estructurados para medir el tiempo exacto por componente (Embedding vs Retrieval vs Gen).
-- [ ] **Hito 5.3: Dashboard de Calidad (Streamlit)**
-  - Interfaz visual para monitorear la salud del índice y visualizar los chunks almacenados.
-
-### Fase 6: Optimización de Fidelidad (Target: 0.90+)
-- [ ] **Hito 6.1: Fine-tuning de Pesos Híbridos**
-  - Ajuste dinámico de pesos (Semántica vs Léxica) basado en el análisis de fallos del Golden Dataset.
-- [ ] **Hito 6.2: Razonamiento Chain-of-Thought (CoT)**
-  - Refinamiento del LLM para forzar un paso de análisis previo a la respuesta técnica final.
+> 👉 **Los hitos operacionales de las fases 1 a 6, incluyendo las tareas pendientes (backlog local) y los logros alcanzados, han sido migrados estructuralmente al tablero Kanban en [tasks.md](./tasks.md).**
 
 ---
 

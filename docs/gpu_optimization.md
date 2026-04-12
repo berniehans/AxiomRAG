@@ -36,3 +36,29 @@ import torch
 print(f"CUDA status: {torch.cuda.is_available()}")
 print(f"Alocación: {torch.cuda.get_device_name(0)}")
 ```
+
+## Gestión Dinámica de VRAM (API Lifespan)
+
+Nuestra API web MLOps previene desbordamientos de Memoria mediante un bloqueador y despachador de eventos asíncronos nativo del Router de FastAPI (Lifespan).
+
+El servidor hace un vaciado activo por evento de cierre y apertura de ciclos en el hardware gráfico:
+```python
+import torch
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator:
+    # 1. Empuje inicial. Vacía por completo la VRAM heredada de la tarjeta gráfica
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        logger.info("✅ [HARDWARE] Limpieza inicial de VRAM superada.")
+
+    # 2. Inicialización estricta MLOps
+    yield
+
+    # Limpieza final en terminación
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+```
+
+De este modo mitigamos fugas temporales y protegemos el canal PCIe de desbordarse masivamente al procesar lotes asíncronos en paralelo.
