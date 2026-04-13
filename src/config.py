@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     # API Keys
     OPENROUTER_API_KEY: Optional[str] = None
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     GROQ_API_KEY: Optional[str] = None
     HF_TOKEN: Optional[str] = None
     
@@ -43,6 +44,9 @@ settings = Settings()
 import os
 if settings.HF_TOKEN:
     os.environ["HF_TOKEN"] = settings.HF_TOKEN
+
+if settings.OPENROUTER_API_KEY:
+    os.environ["OPENAI_API_KEY"] = settings.OPENROUTER_API_KEY
 
 if settings.LANGCHAIN_TRACING_V2.lower() == "true":
     os.environ["LANGCHAIN_TRACING_V2"] = "true"

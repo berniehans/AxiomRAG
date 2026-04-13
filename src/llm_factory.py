@@ -36,7 +36,7 @@ def get_llm(provider: Optional[str] = None, max_tokens: int = 1000, require_json
     else:
         # Por defecto OpenRouter / OpenAI JSON Mode
         return ChatOpenAI(
-            base_url="https://openrouter.ai/api/v1",
+            base_url=settings.OPENROUTER_BASE_URL,
             api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY", # type: ignore
             model=settings.OPENROUTER_DEFAULT_MODEL,
             temperature=0.0,

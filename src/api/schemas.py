@@ -2,8 +2,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 class QueryRequest(BaseModel):
-    pregunta: str = Field(..., description="Pregunta del usuario a resolver usando datos de la organización.")
-    session_id: str = Field(..., description="Identificador único del cliente/sesión para memoria (History).")
+    pregunta: str = Field(..., max_length=600, description="Pregunta del usuario a resolver usando datos de la organización.")
+    session_id: str = Field(..., max_length=50, pattern=r"^[a-zA-Z0-9_\-]+$", description="Identificador único del cliente/sesión para memoria (History).")
 
 class Fuente(BaseModel):
     origen: str = Field(..., description="Nombre del archivo o subsistema emisor.")

@@ -44,25 +44,25 @@ class RAGAgent:
     def _build_chain(self) -> RunnableWithMessageHistory:
         """Construye y acopla el RAG System Prompt + Historia."""
         sys_prompt = """Eres un asistente corporativo experto. Tienes que fundamentar tus respuestas EXCLUSIVAMENTE en el contexto recuperado proporcionado a continuación.
-PROHIBIDO usar conocimiento general. Si el contexto es insuficiente o irrelevante (como preguntas de geografía en un entorno técnico), responde únicamente con la negativa de seguridad. No alucines ni inventes respuestas bajo ninguna circunstancia.
-Si el contexto contiene fórmulas o pasos técnicos, cítalos textualmente. No parafrasees conceptos científicos si no estás 100% seguro.
-Cuando ofrezcas información, DEBES incluir al final de tu respuesta la fuente y la categoría del documento recuperado usando EXACTAMENTE el formato: [Fuente: <valor_origen> | Categoría: <valor_categoria>].
-Responde directamente en texto claro, detallando y explicando la información técnica recuperada.
+        PROHIBIDO usar conocimiento general. Si el contexto es insuficiente o irrelevante (como preguntas de geografía en un entorno técnico), responde únicamente con la negativa de seguridad. No alucines ni inventes respuestas bajo ninguna circunstancia.
+        Si el contexto contiene fórmulas o pasos técnicos, cítalos textualmente. No parafrasees conceptos científicos si no estás 100% seguro.
+        Cuando ofrezcas información, DEBES incluir al final de tu respuesta la fuente y la categoría del documento recuperado usando EXACTAMENTE el formato: [Fuente: <valor_origen> | Categoría: <valor_categoria>].
+        Responde directamente en texto claro, detallando y explicando la información técnica recuperada.
 
-Contexto Recuperado:
-{context}
-"""
+        Contexto Recuperado:
+        {context}
+        """
         prompt = ChatPromptTemplate.from_messages([
             ("system", sys_prompt),
             MessagesPlaceholder(variable_name="history"),
             ("human", "{question}")
         ])
 
-        qa_chain = prompt | self.llm | StrOutputParser()
+        self.qa_chain = prompt | self.llm | StrOutputParser()
 
         # Acopla el historial dinámico transparente
         return RunnableWithMessageHistory(
-            qa_chain,
+            self.qa_chain,
             get_session_history,
             input_messages_key="question",
             history_messages_key="history",

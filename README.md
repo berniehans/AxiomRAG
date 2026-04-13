@@ -105,3 +105,63 @@ El diseño modular respeta el patrón de "Separation of Concerns" bajo tipado es
 El desarrollo activo, seguimiento progresivo y los hitos de escalabilidad a nivel institucional se gestionan de manera centralizada en el archivo local de tareas.
 
 > 👉 **Revisa el archivo [tasks.md](./tasks.md) para consultar el progreso, Backlog, requerimientos técnicos y pendientes activos de MLOps.**
+
+---
+
+## 🚀 Ejecución y Despliegue (Docker)
+
+Esta arquitectura está optimizada para ejecutarse en contenedores con soporte nativo para **NVIDIA CUDA 12.4**.
+
+### 0. Configuración de Entorno
+Crea un archivo `.env` basado en `env.example` con tus llaves de acceso:
+- `OPENROUTER_API_KEY`: Requerida para generación y evaluaciones.
+- `HF_TOKEN`: Opcional, para descarga de modelos protegidos.
+- `OPENROUTER_BASE_URL`: Por defecto `https://openrouter.ai/api/v1`.
+
+### 1. Reconstrucción de la Imagen
+Si realizaste cambios en la lógica de MLOps o en las dependencias de `pyproject.toml`, reconstruye la imagen base:
+
+```powershell
+docker build -t axiomrag:latest .
+```
+
+### 2. Verificación de Hardware
+Asegúrate de que el contenedor tiene visibilidad total de tu GPU RTX antes de iniciar el motor RAG:
+
+```powershell
+docker run --rm --gpus all axiomrag:latest python -c "import torch; print(f'CUDA OK: {torch.cuda.is_available()} | GPU: {torch.cuda.get_device_name(0)}')"
+```
+
+---
+
+## 🧪 Protocolo de Pruebas (MLOps)
+
+El sistema cuenta con una suite de 13 tests automatizados que validan desde la extracción multimodal hasta la fidelidad de las respuestas.
+
+### Ejecución Total en Docker
+Para certificar la imagen antes de un deploy, inyecta tus credenciales de **OpenRouter** mediante el archivo `.env`:
+
+```powershell
+docker run --rm --gpus all --env-file .env axiomrag:latest pytest tests/ -v
+```
+
+### Ejecución por Marcadores (Pytest)
+Puedes segmentar las pruebas según el consumo de recursos definido en `pytest.ini`:
+
+* **Tests de Integración (GPU + LLM):** Valida el flujo **Parent-Child** y el re-ranking semántico.
+    ```powershell
+    docker run --rm --gpus all --env-file .env axiomrag:latest pytest -m integration -v
+    ```
+* **Tests Rápidos (Lógica & Parsers):** Valida esquemas de Pydantic y extracción de texto sin usar VRAM.
+    ```powershell
+    docker run --rm axiomrag:latest pytest -m fast -v
+    ```
+
+---
+
+## 📊 Métricas de Validación
+Al finalizar las pruebas de integración, el sistema genera o actualiza el reporte de observabilidad:
+* **Archivo:** `ragas_eval_metrics.json`
+* **Métrica Clave:** Faithfulness (Fidelidad) > **0.60**.
+
+---

@@ -112,23 +112,37 @@ async def chat_endpoint(request: QueryRequest) -> ChatResponse:
         logger.error(f"Error HTTP 500 en endpoint conversacional (/chat): {e}")
         raise HTTPException(status_code=500, detail="Fallo catastrófico en Pipeline LLM.")
 
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+CHUNK_SIZE = 1024 * 1024  # 1 MB
+
 @app.post("/ingest")
 async def ingest_endpoint(
     background_tasks: BackgroundTasks, 
     file: UploadFile = File(...), 
     categoria: str = Form(None)
 ) -> dict:
-    """Inyección en segundo plano de PDF/XLSX pasando por Data Wrangling."""
+    """Inyección en segundo plano de PDF/XLSX pasando por Data Wrangling restringido a 15MB."""
     if not file.filename.endswith((".pdf", ".xlsx", ".docx")):
         raise HTTPException(status_code=400, detail="Only PDF, XLSX and DOCX supported.")
         
     os.makedirs(settings.DATA_PATH, exist_ok=True)
     temp_path = os.path.join(settings.DATA_PATH, file.filename)
     
+    file_size_accumulated = 0
     with open(temp_path, "wb+") as f:
-        shutil.copyfileobj(file.file, f)
-        
-    logger.info(f"📋 Documento recibido en endpoint: {temp_path}")
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            file_size_accumulated += len(chunk)
+            if file_size_accumulated > MAX_FILE_SIZE:
+                # Payload masivo detectado, abortamos escritura
+                f.close()
+                os.remove(temp_path)
+                raise HTTPException(status_code=413, detail="Payload Too Large: El archivo supera el umbral de seguridad MLOps local establecido en 15 MB.")
+            f.write(chunk)
+            
+    logger.info(f"📋 Documento recibido y avalado operativamente: {temp_path}")
     try:
         from scripts.run_ingestion import run_ingestion
         

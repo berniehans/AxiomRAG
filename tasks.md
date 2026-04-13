@@ -7,11 +7,7 @@ Este documento centraliza el estado del desarrollo, hitos de ingeniería operati
 A continuación, se detalla el backlog técnico de tareas en curso o planificadas basadas en nuestras Fases de desarrollo pendientes.
 
 ### 🟡 En Progreso (In Progress)
-- [ ] **Dockerización Industrial (NVIDIA Container)**
-  - **Objetivo:** Empaquetar un entorno multi-stage puro.
-  - **Requisito:** Debe soportar la inyección nativa del driver mediante `nvidia-container-toolkit` y enlazar correctamente CUDA 12.4 para acelerar las inferencias BGE locales.
-- [ ] **Validación de Contratos (API Security)**
-  - **Objetivo:** Auditar y blindar los endpoints expuestos en el backend (FastAPI/Pydantic) evitando desbordamientos de VRAM con validación estricta de payloads entrantes.
+*(Sin tareas en progreso actual - Esperando asignación del Backlog)*
 
 ### 🔴 Pendientes (To Do)
 - [ ] **Telemetría y Profiling de Latencia**
@@ -25,6 +21,8 @@ A continuación, se detalla el backlog técnico de tareas en curso o planificada
   - Inyectar promts lógicos ocultos pre-generación para que el modelo construya internamente una reflexión técnica antes de proyectar la respuesta consolidada al usuario, validando su propia inferencia.
 
 ## ✅ Hitos Alcanzados (Done)
+- [x] **Dockerización Industrial:** Despliegue empaquetado multi-stage alineado estrictamente a NVIDIA CUDA 12.4.1.
+- [x] **API Guardrails (Memoria):** Subidas limitadas asíncronamente a 15MB y prompts restringidos con Pydantic a 600 caracteres para evasión de OOM en RTX 3060.
 - [x] Ensamble estructural de búsqueda híbrida y Reranker local.
 - [x] Motor de Ingesta Semántica asíncrono implementando `FastAPI BackgroundTasks`.
 - [x] Guardrails lógicos de seguridad pre-Generación (Cutoff restrictivo en Reranker < 0.15).
