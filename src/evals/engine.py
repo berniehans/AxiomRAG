@@ -4,7 +4,10 @@ from typing import List, Dict, Any, Union
 from datasets import Dataset
 from ragas import evaluate
 from openai import OpenAI
-from ragas.metrics import Faithfulness, ContextPrecision
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", category=DeprecationWarning)
+    from ragas.metrics import Faithfulness, ContextPrecision
 from ragas.llms import llm_factory
 from ragas.embeddings import HuggingFaceEmbeddings
 from src.utils.logging_config import setup_logger

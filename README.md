@@ -14,6 +14,7 @@ El sistema integra componentes rigurosos para solventar los fallos típicos (alu
 - **Aceleración Nativa CUDA y Batching Dinámico:** Inferencia optimizada explícitamente para arquitecturas NVIDIA Ampere empleando CUDA 12.4. Se implementó un algoritmo de procesamiento por lotes en el Cross-Encoder utilizando `RERANKER_BATCH_SIZE` (lotes dinámicos), lo que maximiza el paralelismo de tensores de la GPU sin riesgo de desbordar la VRAM en la RTX 3060.
 - **Recuperación *"Parent-Child"*: ** Implementación de separación estricta: Búsqueda focalizada vectorial sobre fragmentos agudos (Hijos Semánticos de 600 tokens) para obtener puntajes de precisión de ~0.95, combinada con la inyección del archivo Global (Padres Completos) al payload del LLM, erradicando el problema de la pérdida de contexto.
 - **Búsqueda Híbrida Ponderada con BM25 Incremental:** Ensamble matemático (50/50 Ensemble) de motor léxico `BM25` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches". Se diseñó una actualización en caliente incremental segmentada con caché bidireccional en memoria (`self._cached_docs_dict`), eliminando los costosos cuellos de botella de disco e I/O físico durante la ingesta en caliente.
+- **Query Expansion y Auto-Query Asíncrono Híbrido:** Intercepción asíncrona de la consulta original para generar 3 variantes semánticas con un LLM de forma paralela. Se realiza una búsqueda multi-query híbrida concurrente mediante `asyncio.gather` contra Qdrant y BM25 con unificación y deduplicación en memoria, integrando *graceful degradation* (fallback automático a la query original en caso de fallos o timeouts).
 - **Ingesta Asíncrona (Non-Blocking) y Fail-Safe de Persistencia:** Pipeline encapsulado sobre `FastAPI BackgroundTasks`. Adicionalmente, el ciclo de vida inicializa `QdrantClient` de manera segura: en entornos de producción (`ENV="production"`), fallos de persistencia detienen inmediatamente la app (`sys.exit(1)`) para evitar la degradación silenciosa e inadvertida a memoria volátil. En desarrollo, degrada de forma controlada a `:memory:` con una advertencia visible en consola.
 
 ## 📊 Observabilidad y MLOps (Baseline Heurístico)
@@ -89,7 +90,7 @@ El diseño modular respeta el patrón de "Separation of Concerns" bajo tipado es
  ┣ 📂 src/ 
  ┃ ┣ 📂 api/          # Endpoints de FastAPI Server.
  ┃ ┣ 📂 agent/        # Lógica conversacional del Motor Generativo.
- ┃ ┣ 📂 retrieval/    # Lógica core de búsqueda (BM25, Qdrant, Cross-Encoders).
+ ┃ ┣ 📂 retrieval/    # Lógica core de búsqueda (BM25, Qdrant, Cross-Encoders, Query Expansion).
  ┃ ┣ 📂 services/     # Lógica de negocio encapsulada.
  ┃ ┗ 📂 repositories/ # Acceso integrado a datos (PostgreSQL, LocalStore).
  ┣ 📜 README.md       # Presentación e imagen principal del repositorio.

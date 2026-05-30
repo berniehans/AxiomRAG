@@ -12,7 +12,8 @@ graph TD
     D --> E[(Qdrant Vector DB)]
     A --> F[(Parent DocStore JSON)]
     
-    U[User Query] --> G[Hybrid Retrieval: 50/50 Ensemble]
+    U[User Query] --> QE[Asynchronous Query Expander]
+    QE --> |Original + 3 Variantes| G[Hybrid Retrieval: Vector + BM25]
     G --> H[Semantic Chunks BGE-M3]
     G --> I[BM25 Lexical Engine]
     H -.-> J[BGE Reranker-v2 CUDA 12.4]
@@ -35,6 +36,19 @@ Sabemos empíricamente que los Embeddings (búsqueda densa) fallan groseramente 
 Nuestro motor implementa un pipeline `EnsembleRetriever` ponderado a `0.5` Vectorial y `0.5` Léxico (`BM25`).
 - Permite detectar el *sentido abstracto* de la pregunta (Vectores).
 - Evita el *"Zero Match"*, siendo letal contra papers altamente densificados con fórmulas ("Retinex", o acrónimos "SSR").
+
+## 🔍 Mecanismo de Query Expansion y Reescritura de Consultas
+Para optimizar la cobertura de búsqueda (Search Recall) y mitigar los problemas de discrepancia de vocabulario (acrónimos corporativos y sinónimos) antes de que la consulta ataque a los recuperadores híbridos, el pipeline intercepta la consulta de forma asíncrona mediante la clase `AsynchronousQueryExpander`.
+
+### 1. Flujo Lógico
+- **Intercepción Asíncrona:** Al iniciar el método de recuperación, la consulta original es evaluada de manera asíncrona.
+- **Variación Semántica:** El módulo utiliza la infraestructura de `llm_factory` configurada con el parámetro `require_json=True` para garantizar un formato JSON estricto. El LLM genera exactamente 3 variaciones semánticas alternativas, extrayendo acrónimos técnicos y sinónimos relevantes.
+- **Degradación Graciosa (Graceful Degradation):** Si se produce un error, excepción o timeout en la llamada al LLM, la excepción es capturada de forma limpia. El sistema continúa operando mediante un fallback automático utilizando únicamente la consulta original del usuario, evitando caídas en el servicio.
+
+### 2. Pipeline de Búsqueda
+- **Ejecución Multi-Query Híbrida:** Tanto la consulta original como las 3 variantes expandidas se ejecutan de manera concurrente mediante `asyncio.gather` contra Qdrant (búsqueda densa) y BM25 (búsqueda léxica).
+- **Unificación y Deduplicación:** Todos los candidatos resultantes se unifican y deduplican en memoria mediante el ID del chunk de documento, garantizando que el Reranker no evalúe fragmentos repetidos.
+- **Reranker sobre Chunks Consolidados:** El Cross-Encoder Reranker local (`BAAI/bge-reranker-v2-m3`) evalúa la lista depurada contra la **consulta original** del usuario para ordenar la relevancia final.
 
 ## 🛡️ Guardrails de Seguridad (0.15 Logit Threshold)
 Al final de la recuperación, el Cross Encoder ejecuta una regresión que descarta los falsos positivos. Todo tensor que obtenga menos de `0.15` en confianza es **destruido**.

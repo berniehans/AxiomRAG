@@ -21,6 +21,7 @@ A continuación, se detalla el backlog técnico de tareas en curso o planificada
   - Inyectar promts lógicos ocultos pre-generación para que el modelo construya internamente una reflexión técnica antes de proyectar la respuesta consolidada al usuario, validando su propia inferencia.
 
 ## ✅ Hitos Alcanzados (Done)
+- [x] **Query Expansion y Auto-Query Asíncrono Híbrido:** Intercepción asíncrona de la consulta original para generar 3 variantes semánticas con un LLM, ejecutando la búsqueda de forma concurrente sobre Qdrant y BM25 mediante `asyncio.gather`. Incluye unificación y deduplicación inteligente y *graceful degradation* (fallback automático a la query original).
 - [x] **Inferencia por Lote Dinámico en Reranker (CUDA):** Batching dinámico mediante `RERANKER_BATCH_SIZE` delegando inferencia al cliente subyacente de `sentence_transformers`, optimizando el paralelismo de tensores.
 - [x] **Ingesta Incremental y Segmentada de BM25:** Diccionario de caché bidireccional en memoria (`self._cached_docs_dict`) para evitar costosas lecturas y deserializaciones de disco en cada indexación.
 - [x] **Fail-Safe de Persistencia en Inicialización (Qdrant):** Control preventivo de fallos en base de datos física, con parada inmediata en producción (`ENV="production"`) y alerta visual en desarrollo con fallback controlado a memoria.

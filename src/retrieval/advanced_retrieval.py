@@ -242,21 +242,80 @@ class AdvancedRetriever:
         )
         logger.info("Pipeline de Búsqueda Avanzada Creado y Lista.")
 
-    def search(self, query: str) -> List[Document]:
-        """Ejecuta Retrieval con mitigación de ruido cruzando atención del Reranker."""
+    async def asearch(self, query: str) -> List[Document]:
+        """
+        Ejecuta Retrieval de forma asíncrona y concurrente cruzando atención del Reranker.
+        Implementa Query Expansion y busca en paralelo sobre Qdrant (vectorial) y BM25 (léxica).
+        """
         start = time.time()
-        logger.info(f"Ejecutando Búsqueda Optimizada (Reranking sobre Hijos) para: '{query}'")
+        logger.info(f"Ejecutando Búsqueda Optimizada Asíncrona (Query Expansion + Multiquery Paralela) para: '{query}'")
         
-        # 1. Recuperar Chunks Hijos desde Vector Store (k=20)
-        # Esto reduce drásticamente los datos leídos de disco/VRAM
-        child_docs = self.vector_store.similarity_search(query, k=20)
+        # 1. Query Expansion asíncrona con AsynchronousQueryExpander
+        expanded_queries = []
+        if not hasattr(self, "query_expander") or self.query_expander is None:
+            try:
+                from src.retrieval.query_expansion import AsynchronousQueryExpander
+                self.query_expander = AsynchronousQueryExpander()
+            except Exception as e:
+                logger.error(f"Error al instanciar AsynchronousQueryExpander de manera tardía: {e}")
+                self.query_expander = None
+                
+        if self.query_expander:
+            expanded_queries = await self.query_expander.expand_query(query)
+            
+        # Unificar la query original con las variaciones expandidas
+        # Filtramos posibles duplicados para evitar consultas redundantes
+        all_queries = [query]
+        for q in expanded_queries:
+            if q.strip() and q.strip().lower() != query.lower() and q.strip() not in all_queries:
+                all_queries.append(q.strip())
+                
+        logger.info(f"Fase de Búsqueda Híbrida Paralela. Consultas totales a ejecutar: {all_queries}")
         
-        # 2. Reranking estricto sobre los Chunks Hijos
-        self.reranker.top_n = 5
-        reranked_children = self.reranker.compress_documents(child_docs, query)
+        # 2. Recuperar Chunks Hijos desde Vector Store y BM25 en paralelo para cada query
+        tasks = []
+        for q in all_queries:
+            # Añadir tarea de búsqueda semántica (vectorial) asíncrona
+            tasks.append(self.vector_store.asimilarity_search(q, k=20))
+            # Añadir tarea de búsqueda léxica (BM25) asíncrona si está inicializado
+            if self.bm25_retriever:
+                tasks.append(self.bm25_retriever.ainvoke(q))
+                
+        # Ejecutar todas las búsquedas de forma paralela y concurrente
+        import asyncio
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # 3. Ensamblaje y Mapeo: Trazamos al padre de los mejores sub-docs
+        # 3. Unificar y deduplicar Chunks Hijos recuperados
+        all_child_docs = []
         id_key = self.parent_retriever.id_key if hasattr(self.parent_retriever, "id_key") else "doc_id"
+        seen_keys = set()
+        
+        for res in results:
+            if isinstance(res, Exception):
+                logger.error(f"Fallo en sub-tarea de búsqueda asíncrona paralela: {res}")
+                continue
+            if not res:
+                continue
+            for doc in res:
+                # La deduplicación se realiza basándose en el doc_id de metadata o hash de page_content
+                p_id = doc.metadata.get(id_key)
+                dup_key = p_id if p_id else hash(doc.page_content)
+                if dup_key not in seen_keys:
+                    seen_keys.add(dup_key)
+                    all_child_docs.append(doc)
+                    
+        logger.info(f"Deduplicación completada: {len(all_child_docs)} chunks hijos únicos consolidados.")
+        
+        if not all_child_docs:
+            logger.warning("No se recuperaron chunks en ninguna de las variantes de búsqueda.")
+            return []
+            
+        # 4. Reranking estricto sobre los Chunks Hijos Consolidados
+        # Evaluamos con respecto a la consulta ORIGINAL del usuario para máxima precisión
+        self.reranker.top_n = 5
+        reranked_children = self.reranker.compress_documents(all_child_docs, query)
+        
+        # 5. Ensamblaje y Mapeo: Trazamos al padre de los mejores sub-docs
         parent_ids = []
         best_scores = {}
         for doc in reranked_children:
@@ -266,7 +325,7 @@ class AdvancedRetriever:
                     parent_ids.append(p_id)
                 if p_id not in best_scores:
                     best_scores[p_id] = doc.metadata.get("relevance_score", 0.0)
-                
+                    
         final_docs = []
         if parent_ids:
             fetched = self.docstore.mget(parent_ids)
@@ -276,6 +335,29 @@ class AdvancedRetriever:
                     doc.metadata["relevance_score"] = best_scores.get(p_id, 0.0)
                     final_docs.append(doc)
                     
-        # Optional: Añadir resultados de BM25 de forma aditiva si se desea ensemble léxico.
-        logger.info(f"Búsqueda finalizada en {time.time()-start:.2f}s. {len(final_docs)} documentos indexados listos.")
+        logger.info(f"Búsqueda finalizada en {time.time()-start:.2f}s. {len(final_docs)} documentos padres indexados listos.")
         return final_docs
+
+    def search(self, query: str) -> List[Document]:
+        """
+        Ejecuta Retrieval con mitigación de ruido cruzando atención del Reranker.
+        
+        Wrapper Síncrono Seguro y Transparente:
+        Ejecuta la lógica asíncrona completa utilizando un ThreadPoolExecutor si detecta
+        que ya se está ejecutando dentro de un bucle de eventos (como en FastAPI),
+        o directamente usando asyncio.run si no hay loop activo.
+        """
+        import asyncio
+        import concurrent.futures
+        
+        try:
+            # Comprobamos si hay un event loop activo
+            asyncio.get_running_loop()
+            # Si hay loop, ejecutamos en un hilo separado para evitar colisiones
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(lambda: asyncio.run(self.asearch(query)))
+                return future.result()
+        except RuntimeError:
+            # Si no hay loop activo, podemos usar asyncio.run directamente de forma segura
+            return asyncio.run(self.asearch(query))
+
