@@ -4,6 +4,7 @@ from typing import Optional
 class Settings(BaseSettings):
     # App General
     LLM_PROVIDER: str = "openrouter"
+    ENV: str = "development"
     
     # Paths
     DATA_PATH: str = "data"
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     EMBEDDINGS_MODEL_NAME: str = "BAAI/bge-m3"
     OPENROUTER_DEFAULT_MODEL: str = "openai/gpt-4o-mini"
     RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-v2-m3"
+    RERANKER_BATCH_SIZE: int = 4
     
     # Resiliencia LLM
     LLM_TIMEOUT: int = 30

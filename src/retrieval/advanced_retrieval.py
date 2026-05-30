@@ -38,10 +38,18 @@ class TimedCrossEncoderReranker(CrossEncoderReranker):
             
         texts = [[query, doc.page_content] for doc in documents]
         
-        # Procesamiento secuencial explícito (batch_size=1) para proteger la VRAM
+        # Procesamiento en lotes dinámicos para paralelismo óptimo en CUDA sin desbordar VRAM
+        batch_size = getattr(settings, "RERANKER_BATCH_SIZE", 4)
         scores = []
-        for txt in texts:
-            scores.append(self.model.score([txt])[0])
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+            if hasattr(self.model, "client") and hasattr(self.model.client, "predict"):
+                batch_scores = self.model.client.predict(batch_texts, batch_size=settings.RERANKER_BATCH_SIZE)
+                if hasattr(batch_scores, "shape") and len(batch_scores.shape) > 1:
+                    batch_scores = list(map(lambda x: x[1], batch_scores))
+            else:
+                batch_scores = self.model.score(batch_texts)
+            scores.extend(batch_scores)
             
         if torch.cuda.is_available():
             torch.cuda.synchronize()
@@ -116,7 +124,11 @@ class AdvancedRetriever:
         self.bm25_retriever = None
         self.ensemble_retriever = None
         self.pipeline_final = None
+        self._cached_docs_dict = {}
         self._init_compressor()
+        
+        # Carga incremental / restauración inicial en caliente
+        self.update_bm25_en_caliente()
 
     def _init_compressor(self):
         """Preconstruye la capa de compresión BGE Reranker (Hito 2.2) con Singleton."""
@@ -180,19 +192,39 @@ class AdvancedRetriever:
         self.update_bm25_en_caliente()
 
     def update_bm25_en_caliente(self):
-        """Actualiza el índice BM25 leyendo todos los documentos del docstore local y reconstruye el pipeline."""
+        """Actualiza el índice BM25 de manera incremental y reconstruye el pipeline."""
         if not os.path.exists(settings.LOCAL_STORE_PATH):
             return
             
-        keys = os.listdir(settings.LOCAL_STORE_PATH)
-        if keys:
-            all_docs = self.docstore.mget(keys)
-            valid_docs = [d for d in all_docs if d is not None]
-            if valid_docs:
-                self.bm25_retriever = BM25Retriever.from_documents(valid_docs)
-                self.bm25_retriever.k = 8
-                logger.info(f"Índice Léxico BM25 actualizado internamente con {len(valid_docs)} documentos totales.")
-                self._sync_pipeline()
+        if not hasattr(self, "_cached_docs_dict"):
+            self._cached_docs_dict = {}
+            
+        current_keys = os.listdir(settings.LOCAL_STORE_PATH)
+        
+        # Sincronización bidireccional: Eliminar de la caché documentos que ya no estén en disco
+        keys_to_remove = set(self._cached_docs_dict.keys()) - set(current_keys)
+        for k in keys_to_remove:
+            self._cached_docs_dict.pop(k, None)
+            
+        # Cargar de forma incremental solo las nuevas llaves
+        keys_to_load = [k for k in current_keys if k not in self._cached_docs_dict]
+        
+        if keys_to_load:
+            logger.info(f"Detectados {len(keys_to_load)} nuevos documentos en el store local. Cargando incrementalmente...")
+            loaded_docs = self.docstore.mget(keys_to_load)
+            for k, doc in zip(keys_to_load, loaded_docs):
+                if doc is not None:
+                    self._cached_docs_dict[k] = doc
+                    
+        valid_docs = list(self._cached_docs_dict.values())
+        if valid_docs:
+            self.bm25_retriever = BM25Retriever.from_documents(valid_docs)
+            self.bm25_retriever.k = 8
+            logger.info(f"Índice Léxico BM25 actualizado incrementalmente: {len(valid_docs)} documentos totales "
+                        f"({len(keys_to_load)} cargados, {len(keys_to_remove)} eliminados).")
+            self._sync_pipeline()
+        else:
+            logger.warning("No hay documentos en caché local para inicializar el BM25Retriever.")
 
     def _sync_pipeline(self):
         """Acopla las tuberías en un ensamble unificado."""

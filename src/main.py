@@ -38,8 +38,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         # Con fines locales preparamos un client robusto a data temporal/local si falla:
         try:
              client = QdrantClient(path=settings.QDRANT_PATH)
-        except Exception:
-             client = QdrantClient(":memory:")
+        except Exception as e:
+             import sys
+             env_name = getattr(settings, "ENV", "development").lower()
+             logger.critical(
+                 f"🚨 [FALLO CRÍTICO DE PERSISTENCIA QDRANT] No se pudo inicializar QdrantClient en la ruta persistente "
+                 f"'{settings.QDRANT_PATH}'. Detalle del error: {e}"
+             )
+             if env_name in ("production", "prod"):
+                 logger.error("🛑 El entorno actual está configurado como PRODUCCIÓN. Deteniendo el servidor de forma ruidosa para evitar degradación silenciosa a memoria.")
+                 sys.exit(1)
+             else:
+                 logger.warning(
+                     "\n" + "!" * 80 + "\n"
+                     f"⚠️  [ALERTA DE DEGRADACIÓN] SE HABILITARÁ UN FALLBACK EN MEMORIA (:memory:) DEBIDO AL FALLO EN DESARROLLO.\n"
+                     f"Los datos indexados no se persistirán tras el reinicio del servidor.\n"
+                     f"Por favor, revise permisos y locks de archivos en la ruta: {settings.QDRANT_PATH}\n"
+                     + "!" * 80
+                 )
+                 client = QdrantClient(":memory:")
              
         # Si la colección no existe, inicialízala (BGE-M3 = 1024 vector size)
         if not client.collection_exists(settings.QDRANT_COLLECTION_NAME):

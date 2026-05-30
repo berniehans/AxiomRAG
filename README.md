@@ -11,10 +11,10 @@ Repositorio de grado de producción que implementa una arquitectura **Retrieval-
 
 El sistema integra componentes rigurosos para solventar los fallos típicos (alucinaciones, pérdida del contexto y cuellos de botella CPU) de los RAG convencionales:
 
-- **Aceleración Nativa CUDA:** Inferencia optimizada explícitamente para arquitecturas NVIDIA Ampere empleando CUDA 12.4. Esto permitió reducir la latencia del componente de Re-Ranking logrando tiempos consistentes de `< 500ms` en una RTX 3060.
+- **Aceleración Nativa CUDA y Batching Dinámico:** Inferencia optimizada explícitamente para arquitecturas NVIDIA Ampere empleando CUDA 12.4. Se implementó un algoritmo de procesamiento por lotes en el Cross-Encoder utilizando `RERANKER_BATCH_SIZE` (lotes dinámicos), lo que maximiza el paralelismo de tensores de la GPU sin riesgo de desbordar la VRAM en la RTX 3060.
 - **Recuperación *"Parent-Child"*: ** Implementación de separación estricta: Búsqueda focalizada vectorial sobre fragmentos agudos (Hijos Semánticos de 600 tokens) para obtener puntajes de precisión de ~0.95, combinada con la inyección del archivo Global (Padres Completos) al payload del LLM, erradicando el problema de la pérdida de contexto.
-- **Búsqueda Híbrida Ponderada:** Ensamble matemático (50/50 Ensemble) de motor léxico `BM25` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches" en terminología técnica y acrónimos severos.
-- **Ingesta Asíncrona (Non-Blocking):** Pipeline encapsulado sobre `FastAPI BackgroundTasks`. Absorbe 289 documentos técnicos persistiendo la evaluación global sin detener el hilo principal ni agotar el Thread Pool de las peticiones HTTP del usuario.
+- **Búsqueda Híbrida Ponderada con BM25 Incremental:** Ensamble matemático (50/50 Ensemble) de motor léxico `BM25` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches". Se diseñó una actualización en caliente incremental segmentada con caché bidireccional en memoria (`self._cached_docs_dict`), eliminando los costosos cuellos de botella de disco e I/O físico durante la ingesta en caliente.
+- **Ingesta Asíncrona (Non-Blocking) y Fail-Safe de Persistencia:** Pipeline encapsulado sobre `FastAPI BackgroundTasks`. Adicionalmente, el ciclo de vida inicializa `QdrantClient` de manera segura: en entornos de producción (`ENV="production"`), fallos de persistencia detienen inmediatamente la app (`sys.exit(1)`) para evitar la degradación silenciosa e inadvertida a memoria volátil. En desarrollo, degrada de forma controlada a `:memory:` con una advertencia visible en consola.
 
 ## 📊 Observabilidad y MLOps (Baseline Heurístico)
 

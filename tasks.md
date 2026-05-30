@@ -21,6 +21,9 @@ A continuación, se detalla el backlog técnico de tareas en curso o planificada
   - Inyectar promts lógicos ocultos pre-generación para que el modelo construya internamente una reflexión técnica antes de proyectar la respuesta consolidada al usuario, validando su propia inferencia.
 
 ## ✅ Hitos Alcanzados (Done)
+- [x] **Inferencia por Lote Dinámico en Reranker (CUDA):** Batching dinámico mediante `RERANKER_BATCH_SIZE` delegando inferencia al cliente subyacente de `sentence_transformers`, optimizando el paralelismo de tensores.
+- [x] **Ingesta Incremental y Segmentada de BM25:** Diccionario de caché bidireccional en memoria (`self._cached_docs_dict`) para evitar costosas lecturas y deserializaciones de disco en cada indexación.
+- [x] **Fail-Safe de Persistencia en Inicialización (Qdrant):** Control preventivo de fallos en base de datos física, con parada inmediata en producción (`ENV="production"`) y alerta visual en desarrollo con fallback controlado a memoria.
 - [x] **Dockerización Industrial:** Despliegue empaquetado multi-stage alineado estrictamente a NVIDIA CUDA 12.4.1.
 - [x] **API Guardrails (Memoria):** Subidas limitadas asíncronamente a 15MB y prompts restringidos con Pydantic a 600 caracteres para evasión de OOM en RTX 3060.
 - [x] Ensamble estructural de búsqueda híbrida y Reranker local.

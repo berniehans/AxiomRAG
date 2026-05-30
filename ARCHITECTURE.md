@@ -39,3 +39,17 @@ Nuestro motor implementa un pipeline `EnsembleRetriever` ponderado a `0.5` Vecto
 ## 🛡️ Guardrails de Seguridad (0.15 Logit Threshold)
 Al final de la recuperación, el Cross Encoder ejecuta una regresión que descarta los falsos positivos. Todo tensor que obtenga menos de `0.15` en confianza es **destruido**.
 De este modo, evitamos prompts vacíos que degeneran en alucinaciones puras; si no poseemos un contexto verídico recuperado, el bot se cruza de brazos protegiendo la identidad de la App.
+
+## ⚡ Optimizaciones Recientes de Rendimiento y Concurrencia
+
+### 1. Reranker de Lote Dinámico (Dynamic Batching)
+En `TimedCrossEncoderReranker.compress_documents`, se implementó procesamiento por lotes para el Cross-Encoder utilizando `settings.RERANKER_BATCH_SIZE`. En lugar de evaluar secuencialmente cada texto con un lote implícito de 1 (lo que destruía el paralelismo de tensores de CUDA), segmentamos el corpus de textos y utilizamos la API predictiva del cliente subyacente (`self.model.client.predict`) para paralelizar la inferencia sin riesgo de desbordar la VRAM en la GPU.
+
+### 2. Ingesta BM25 Segmentada e Incremental
+El método `update_bm25_en_caliente` ahora evita la reconstrucción total y síncrona del corpus desde disco (que requería leer y des-serializar todos los documentos almacenados en `LOCAL_STORE_PATH` en cada nueva subida). 
+Se diseñó un sistema de caché de documentos en memoria estructurado en un diccionario (`self._cached_docs_dict`), sincronizándose bidireccionalmente con el directorio local (insertando llaves nuevas y removiendo llaves eliminadas). Esto reduce el costo de disco a cero para documentos preexistentes.
+
+### 3. Fortalecimiento de la Persistencia (Qdrant Client Fail-Safe)
+En la inicialización del ciclo de vida (`main.py`), se eliminó la degradación silenciosa e inadvertida a base de datos en memoria ante fallos en la base de datos local física de Qdrant. 
+- En entornos de producción (`ENV="production"`), la aplicación emite logs de criticidad alta y detiene ruidosamente el inicio del servidor (`sys.exit(1)`) para prevenir la pérdida de datos.
+- En entornos de desarrollo, se permite la degradación con una advertencia visual masiva en la consola.
