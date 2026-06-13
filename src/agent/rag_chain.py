@@ -12,6 +12,8 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
 from src.llm_factory import get_llm
 from src.retrieval.query_expansion import expand_query_async
 from src.utils.logging_config import setup_logger
@@ -54,19 +56,54 @@ class RAGAgent:
     def _build_graph(self) -> Any:
         """Construye y compila la topología del StateGraph con LangGraph."""
         
-        async def expand_and_retrieve_node(state: GraphState) -> Dict[str, Any]:
+        async def expand_query_node(state: GraphState) -> Dict[str, Any]:
             query = state["original_query"]
-            logger.info(f"[Grafo] Expandiendo y recuperando documentos para: '{query}'")
+            logger.info(f"[Grafo] Expandiendo consulta original: '{query}'")
             
-            # 1. Query Expansion (asíncrona y paralela)
-            expanded = await expand_query_async(query)
+            llm = ChatOpenAI(
+                base_url=settings.OPENROUTER_BASE_URL,
+                api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+                model=settings.OPENROUTER_FAST_MODEL,
+                temperature=0.0,
+                timeout=settings.LLM_TIMEOUT,
+                max_retries=settings.LLM_MAX_RETRIES,
+                extra_body={"reasoning_effort": "low"}
+            )
+            
+            class ExpandedQueries(BaseModel):
+                queries: List[str] = Field(
+                    description="Exactly 3 technical search query variations (queries), synonyms, or acronyms of the original query."
+                )
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", (
+                    "Eres un experto en optimización de búsquedas técnicas. Tu tarea es generar variantes de búsqueda (queries) "
+                    "que ayuden a encontrar la información relevante en una base de datos vectorial y motor léxico. "
+                    "Genera exactamente 3 variaciones técnicas y precisas de la consulta original."
+                )),
+                ("human", "Consulta original: {query}")
+            ])
+            
+            chain = prompt | llm.with_structured_output(ExpandedQueries)
+            try:
+                res = await chain.ainvoke({"query": query})
+                expanded = res.queries
+                logger.info(f"[Grafo] Variantes de queries generadas: {expanded}")
+                return {"expanded_queries": expanded}
+            except Exception as e:
+                logger.error(f"[Grafo] Error al expandir consulta: {e}. Usando fallback vacío.")
+                return {"expanded_queries": []}
+
+        async def retrieve_local_node(state: GraphState) -> Dict[str, Any]:
+            query = state["original_query"]
+            expanded = state.get("expanded_queries", [])
             all_queries = [query] + expanded
             
-            # 2. Invocación asíncrona del custom retriever para cada query
+            logger.info(f"[Grafo] Recuperando localmente para consultas: {all_queries}")
+            
             tasks = [self.retriever.ainvoke(q) for q in all_queries]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # 3. Consolidación y deduplicación por page_content para evitar redundancias
             seen_contents = set()
             unique_docs = []
             for res in results:
@@ -77,11 +114,8 @@ class RAGAgent:
                             seen_contents.add(c)
                             unique_docs.append(doc)
                             
-            logger.info(f"[Grafo] Recuperados {len(unique_docs)} documentos únicos combinando consultas expandidas.")
-            return {
-                "expanded_queries": expanded,
-                "retrieved_documents": unique_docs
-            }
+            logger.info(f"[Grafo] Recuperados {len(unique_docs)} documentos únicos (Padres Completos).")
+            return {"retrieved_documents": unique_docs}
 
         async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
             query = state["original_query"]
@@ -177,8 +211,17 @@ class RAGAgent:
             history_messages = history.messages
             
             context_str = "\n\n".join([f"[valor_origen: {d.metadata.get('origen', 'Desconocido')} | valor_categoria: {d.metadata.get('categoria', 'General')}]\n{d.page_content}" for d in docs])
-            
-            llm = get_llm(max_tokens=1000, require_json=False)
+            llm = ChatOpenAI(
+                base_url=settings.OPENROUTER_BASE_URL,
+                api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+                model=settings.OPENROUTER_DEFAULT_MODEL,
+                temperature=0.0,
+                timeout=settings.LLM_TIMEOUT,
+                max_retries=settings.LLM_MAX_RETRIES,
+                max_tokens=1000,
+                max_completion_tokens=1000,
+                extra_body={"reasoning_effort": "high"}
+            )
             chain = prompt | llm | StrOutputParser()
             
             try:
@@ -252,14 +295,16 @@ class RAGAgent:
 
         workflow = StateGraph(GraphState)
         
-        workflow.add_node("expand_and_retrieve", expand_and_retrieve_node)
+        workflow.add_node("expand_query", expand_query_node)
+        workflow.add_node("retrieve_local", retrieve_local_node)
         workflow.add_node("grade_documents", grade_documents_node)
         workflow.add_node("web_search_fallback", web_search_fallback_node)
         workflow.add_node("generate_answer", generate_answer_node)
         workflow.add_node("refine_query", refine_query_node)
         
-        workflow.add_edge(START, "expand_and_retrieve")
-        workflow.add_edge("expand_and_retrieve", "grade_documents")
+        workflow.add_edge(START, "expand_query")
+        workflow.add_edge("expand_query", "retrieve_local")
+        workflow.add_edge("retrieve_local", "grade_documents")
         
         def route_after_grading(state: GraphState) -> str:
             docs = state.get("retrieved_documents", [])
@@ -371,7 +416,7 @@ class RAGAgent:
             }
         )
         
-        workflow.add_edge("refine_query", "expand_and_retrieve")
+        workflow.add_edge("refine_query", "expand_query")
         
         logger.info("Compilando StateGraph de LangGraph...")
         return workflow.compile(checkpointer=MemorySaver())
