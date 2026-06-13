@@ -25,7 +25,7 @@ with tab_ingest:
     
     if st.button("Iniciar Extracción de Metadatos (GPU)"):
         if uploaded_file is not None:
-            with st.spinner("Fragmentando con BGE-M3 e inyectando metadata vía gpt-4o-mini..."):
+            with st.spinner("Fragmentando con BGE-M3 e inyectando metadata vía DeepSeek..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                     data = {"categoria": cat}

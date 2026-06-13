@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List
+from typing import List, Any
 from langchain_core.documents import Document
 from langchain_classic.retrievers.ensemble import EnsembleRetriever
 from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
@@ -11,6 +11,9 @@ from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.storage import LocalFileStore
 from langchain_core.stores import BaseStore
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.callbacks import CallbackManagerForRetrieverRun, AsyncCallbackManagerForRetrieverRun
+from pydantic import ConfigDict, Field
 
 from src.config import settings
 from src.utils.logging_config import setup_logger
@@ -93,11 +96,22 @@ class DocumentJsonFileStore(BaseStore):
     def yield_keys(self, *args, **kwargs):
         return iter([])
 
-class AdvancedRetriever:
+class AdvancedRetriever(BaseRetriever):
     """Ingeniería de Recuperación (BM25 + Semantic + Reranker + ParentDocs)."""
     
-    def __init__(self, vector_store, chunker):
-        self.vector_store = vector_store
+    vector_store: Any = Field(description="Qdrant Vector store conector")
+    docstore: Any = Field(default=None, description="Local Parent Doc storage")
+    parent_retriever: Any = Field(default=None, description="LangChain Parent Document Retriever")
+    bm25_retriever: Any = Field(default=None, description="BM25 Retriever léxico")
+    ensemble_retriever: Any = Field(default=None, description="Ensemble Retriever híbrido")
+    pipeline_final: Any = Field(default=None, description="Pipeline final comprimido")
+    cross_encoder: Any = Field(default=None, description="Cross Encoder Model")
+    reranker: Any = Field(default=None, description="Timed Cross Encoder Reranker")
+    
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    def __init__(self, vector_store: Any, chunker: Any = None, **kwargs):
+        super().__init__(vector_store=vector_store, **kwargs)
         
         # 1. Parent-Document Storage (Hito 2.3)
         os.makedirs(settings.LOCAL_STORE_PATH, exist_ok=True)
@@ -247,3 +261,14 @@ class AdvancedRetriever:
         # Optional: Añadir resultados de BM25 de forma aditiva si se desea ensemble léxico.
         logger.info(f"Búsqueda finalizada en {time.time()-start:.2f}s. {len(final_docs)} documentos indexados listos.")
         return final_docs
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        return self.search(query)
+
+    async def _aget_relevant_documents(
+        self, query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        import asyncio
+        return await asyncio.to_thread(self.search, query)

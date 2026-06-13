@@ -12,7 +12,7 @@ El sistema RAG ha sido desdoblado en dos conductos de ejecución independientes 
 Encargada de transformar información no estructurada en un grafo vectorial altamente indexable:
 1. **Extracción Multimodal (`parsers.py`):** Limpia artefactos en archivos binarios complejos (PDF, DOCX, XLSX).
 2. **Segmentación Contextual (`chunking.py`):** Implementa un *Semantic Chunking* con solapamiento controlado (Overlap) usando `BAAI/bge-m3`. Se prefiere preservar la cohesión temática de los enunciados antes que depender de un corte rígido de caracteres.
-3. **Inyección Estructurada de Metadatos (`metadata_extractor.py`):** Usa `gpt-4o-mini` para rotular el fragmento (Categoria, Origen y Resumen hiperestricto de 20 palabras máximo). 
+3. **Inyección Estructurada de Metadatos (`metadata_extractor.py`):** Usa `deepseek/deepseek-v4-flash` para rotular el fragmento (Categoria, Origen y Resumen hiperestricto de 20 palabras máximo). 
 
 ### Fase Online (Consulta y Generación)
 El cerebro en tiempo real que el usuario experimenta en el frontend:
@@ -32,10 +32,11 @@ Inicialmente, saturar un modelo Cross-Encoder (`BGE-Reranker-v2-m3`) enviándole
 * El tensor del Cross-Encoder ahora aplica *self-attention* atómica y estricta en tiempo sub-segundo solo a estas pequeñas matrices. Una vez ranqueados, **remapeamos** ese micro-fragmento hacia su Documento Padre íntegro, pasándole este gran contexto al LLM generativo final.
 * **Resultado:** Reducción computacional de latencia MLOps a **<0.3 segundos** para el Cross-Encoder, neutralizando completamente el síndrome de *"Lost in the Middle"* (Las respuestas correctas ya no están perdidas en un bloque masivo de texto ciego).
 
-### Migración Efectiva a `gpt-4o-mini`
-Mover la canalización desde APIs gratuitas genéricas hacia el modo de pago hiper-reducido generó eficiencias sistémicas enormes:
-* **Fiabilidad Absoluta en Formato JSON:** Por contrato API (`response_format={"type": "json_object"}`), OpenRouter + OpenAI jamás retorna caracteres residuales; eliminando nativamente errores endémicos como el `EOF while parsing`, y simplificando el auto-healing de Pydantic dentro del código.
-* **Presupuesto Marginal:** Permitir la inyección MLOps de ~2,000 papers íntegros por la ínfima tarifa de aproximadamente $1 USD.
+### Migración Efectiva a `deepseek/deepseek-v4`
+Mover la canalización desde modelos anteriores hacia la suite optimizada de DeepSeek V4 en OpenRouter generó eficiencias sistémicas enormes:
+* **Fiabilidad Absoluta en Formato JSON:** Por contrato API (`response_format={"type": "json_object"}`), `deepseek/deepseek-v4-flash` jamás retorna caracteres residuales; eliminando nativamente errores endémicos como el `EOF while parsing`, y simplificando el auto-healing de Pydantic dentro del código.
+* **Capacidad de Razonamiento:** El uso de `deepseek/deepseek-v4-pro` con un esfuerzo de razonamiento alto (`DEEPSEEK_REASONING_EFFORT = "high"`) dota al RAG de una capacidad superior de deducción y síntesis de respuestas complejas a partir de contextos científicos.
+* **Presupuesto Marginal:** Una de las tasas de costo por token más bajas de la industria, optimizando el consumo MLOps de forma radical.
 
 ---
 

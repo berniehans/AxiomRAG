@@ -14,15 +14,28 @@ class Settings(BaseSettings):
 
     # API Keys
     OPENROUTER_API_KEY: Optional[str] = None
-    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     GROQ_API_KEY: Optional[str] = None
     HF_TOKEN: Optional[str] = None
     
     # Modelo Config
     EMBEDDINGS_MODEL_NAME: str = "BAAI/bge-m3"
-    OPENROUTER_DEFAULT_MODEL: str = "openai/gpt-4o-mini"
     RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-v2-m3"
+    RERANKER_BATCH_SIZE: int = 4  # Optimizado para tu RTX 3060
     
+    # --- Configuración OpenRouter para DeepSeek ---
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    
+    # 1. Modelo ultra-rápido para Query Expansion y Evaluación de Documentos (JSON Estricto)
+    # Reemplaza a gemini-2.5-flash / gemini-3.1-flash-lite
+    OPENROUTER_FAST_MODEL: str = "deepseek/deepseek-v4-flash"
+    
+    # 2. Modelo enfocado en Razonamiento Avanzado para la Síntesis del Agente RAG
+    # Reemplaza a los modelos Pro de OpenAI/Google para consolidación semántica compleja
+    OPENROUTER_DEFAULT_MODEL: str = "deepseek/deepseek-v4-pro"
+    
+    # Parámetros específicos para el comportamiento de DeepSeek en OpenRouter
+    DEEPSEEK_REASONING_EFFORT: str = "high"  # Opciones: "high" o "xhigh" para V4 Pro
+
     # Resiliencia LLM
     LLM_TIMEOUT: int = 30
     LLM_MAX_RETRIES: int = 1

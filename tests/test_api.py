@@ -43,11 +43,12 @@ def test_api_chat_conversational_endpoint(mocker):
     """
     # Aislar Agente MLOps del Framework de Servidor
     mock_agent = mocker.MagicMock(spec=RAGAgent)
-    mock_agent.ask.return_value = {
+    from unittest.mock import AsyncMock
+    mock_agent.ask = AsyncMock(return_value={
         "respuesta": "Salitre detectado en nivel norte.",
         "fuentes": [{"origen":"Doc.pdf","categoria":"General","score":0.99}],
         "tiempo_procesamiento_s": 0.25
-    }
+    })
     
     app_state["agent"] = mock_agent
     

@@ -92,6 +92,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+from fastapi.responses import StreamingResponse
+import json
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: QueryRequest) -> ChatResponse:
     """Interfaz Conversacional: Soporta Memoria a través de `session_id`."""
@@ -100,7 +103,7 @@ async def chat_endpoint(request: QueryRequest) -> ChatResponse:
         raise HTTPException(status_code=503, detail="Modelo deshabilitado / Falla de VRAM.")
     
     try:
-        resultado = agent.ask(question=request.pregunta, session_id=request.session_id)
+        resultado = await agent.ask(question=request.pregunta, session_id=request.session_id)
         
         return ChatResponse(
             respuesta=resultado["respuesta"],
@@ -111,6 +114,52 @@ async def chat_endpoint(request: QueryRequest) -> ChatResponse:
     except Exception as e:
         logger.error(f"Error HTTP 500 en endpoint conversacional (/chat): {e}")
         raise HTTPException(status_code=500, detail="Fallo catastrófico en Pipeline LLM.")
+
+@app.post("/chat/stream")
+async def chat_stream_endpoint(request: QueryRequest) -> StreamingResponse:
+    """Flujo por Eventos en Tiempo Real: Retorna eventos y tokens vía SSE."""
+    agent = app_state.get("agent")
+    if not agent:
+        raise HTTPException(status_code=503, detail="Modelo deshabilitado / Falla de VRAM.")
+        
+    initial_state = {
+        "original_query": request.pregunta,
+        "expanded_queries": [],
+        "retrieved_documents": [],
+        "relevance_scores": [],
+        "loop_count": 0,
+        "final_answer": "",
+        "session_id": request.session_id,
+        "sources": []
+    }
+    
+    config = {"configurable": {"thread_id": request.session_id}}
+    
+    async def event_generator():
+        try:
+            # Consumir astream_events de LangGraph
+            async for event in agent.graph.astream_events(initial_state, config=config, version="v2"):
+                kind = event["event"]
+                name = event["name"]
+                
+                # Transmitir tokens del modelo de chat principal
+                if kind == "on_chat_model_stream":
+                    chunk = event["data"].get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        yield f"data: {json.dumps({'event': 'token', 'data': chunk.content})}\n\n"
+                
+                # Transmitir transiciones de nodos del grafo
+                elif kind == "on_chain_start" and name in ["expand_and_retrieve", "grade_documents", "web_search_fallback", "generate_answer", "refine_query"]:
+                    yield f"data: {json.dumps({'event': 'node_start', 'node': name})}\n\n"
+                elif kind == "on_chain_end" and name in ["expand_and_retrieve", "grade_documents", "web_search_fallback", "generate_answer", "refine_query"]:
+                    yield f"data: {json.dumps({'event': 'node_end', 'node': name})}\n\n"
+            
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"Fallo en streaming de eventos: {e}")
+            yield f"data: {json.dumps({'event': 'error', 'data': str(e)})}\n\n"
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
 CHUNK_SIZE = 1024 * 1024  # 1 MB

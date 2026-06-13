@@ -7,6 +7,7 @@ from openai import OpenAI
 from ragas.metrics import Faithfulness, ContextPrecision
 from ragas.llms import llm_factory
 from ragas.embeddings import HuggingFaceEmbeddings
+from ragas.run_config import RunConfig
 from src.utils.logging_config import setup_logger
 from src.config import settings
 
@@ -54,11 +55,13 @@ class RagasEvaluator:
                 ContextPrecision(llm=self.evaluator_llm)
             ]
 
+            run_config = RunConfig(max_workers=1, timeout=60, max_retries=3)
             result = evaluate(
                 dataset=hf_dataset,
                 metrics=metrics,
                 llm=self.evaluator_llm,
-                embeddings=self.evaluator_embeddings
+                embeddings=self.evaluator_embeddings,
+                run_config=run_config
             )
             
             output_file = "ragas_eval_metrics.json"

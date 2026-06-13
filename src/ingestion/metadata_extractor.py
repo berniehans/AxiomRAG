@@ -65,5 +65,5 @@ class MetadataExtractor:
                 
             return resultado
         except Exception as e:
-            logger.error(f"Fallo irrecuperable de parsing al generar JSON en gpt-4o-mini. Emitiendo Fallback vacío. Error: {e}")
+            logger.error(f"Fallo irrecuperable de parsing al generar JSON en el LLM de metadatos. Emitiendo Fallback vacío. Error: {e}")
             return DocumentMetadata()

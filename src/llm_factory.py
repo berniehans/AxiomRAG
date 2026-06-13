@@ -35,10 +35,18 @@ def get_llm(provider: Optional[str] = None, max_tokens: int = 1000, require_json
         )
     else:
         # Por defecto OpenRouter / OpenAI JSON Mode
+        if require_json:
+            model_name = settings.OPENROUTER_FAST_MODEL
+        else:
+            model_name = settings.OPENROUTER_DEFAULT_MODEL
+            if hasattr(settings, "DEEPSEEK_REASONING_EFFORT") and settings.DEEPSEEK_REASONING_EFFORT:
+                model_kwargs["reasoning_effort"] = settings.DEEPSEEK_REASONING_EFFORT
+
+        logger.info(f"Usando modelo de OpenRouter: {model_name} (require_json={require_json})")
         return ChatOpenAI(
             base_url=settings.OPENROUTER_BASE_URL,
             api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY", # type: ignore
-            model=settings.OPENROUTER_DEFAULT_MODEL,
+            model=model_name,
             temperature=0.0,
             timeout=settings.LLM_TIMEOUT,
             max_retries=settings.LLM_MAX_RETRIES,

@@ -12,7 +12,7 @@ Repositorio de grado de producción que implementa una arquitectura **Retrieval-
 El sistema integra componentes rigurosos para solventar los fallos típicos (alucinaciones, pérdida del contexto y cuellos de botella CPU) de los RAG convencionales:
 
 - **Aceleración Nativa CUDA:** Inferencia optimizada explícitamente para arquitecturas NVIDIA Ampere empleando CUDA 12.4. Esto permitió reducir la latencia del componente de Re-Ranking logrando tiempos consistentes de `< 500ms` en una RTX 3060.
-- **Recuperación *"Parent-Child"*: ** Implementación de separación estricta: Búsqueda focalizada vectorial sobre fragmentos agudos (Hijos Semánticos de 600 tokens) para obtener puntajes de precisión de ~0.95, combinada con la inyección del archivo Global (Padres Completos) al payload del LLM, erradicando el problema de la pérdida de contexto.
+- **Recuperación *"Parent-Child"*:** Implementación de separación estricta: Búsqueda focalizada vectorial sobre fragmentos agudos (Hijos Semánticos de 600 tokens) para obtener puntajes de precisión de ~0.95, combinada con la inyección del archivo Global (Padres Completos) al payload del LLM, erradicando el problema de la pérdida de contexto.
 - **Búsqueda Híbrida Ponderada:** Ensamble matemático (50/50 Ensemble) de motor léxico `BM25` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches" en terminología técnica y acrónimos severos.
 - **Ingesta Asíncrona (Non-Blocking):** Pipeline encapsulado sobre `FastAPI BackgroundTasks`. Absorbe 289 documentos técnicos persistiendo la evaluación global sin detener el hilo principal ni agotar el Thread Pool de las peticiones HTTP del usuario.
 
@@ -94,19 +94,10 @@ El diseño modular respeta el patrón de "Separation of Concerns" bajo tipado es
  ┃ ┗ 📂 repositories/ # Acceso integrado a datos (PostgreSQL, LocalStore).
  ┣ 📜 README.md       # Presentación e imagen principal del repositorio.
  ┣ 📜 ARCHITECTURE.md # Detalles de diseño arquitectónico y diagramas.
- ┣ 📜 tasks.md        # Roadmap operativo, Kanban y seguimiento de tareas.
  ┣ 📜 agents.md       # Reglas unificadas y mapa cognitivo para Agentes MLOps.
  ┣ 📜 main.py         # Punto de entrada ASGI, Gestión HW (empty_cache via lifespan).
  ┗ 📜 pyproject.toml  # Dependencias nativas (uv) amarradas a GPU pytorch-cu124.
 ```
-
-## 🗺️ Roadmap y Tareas Pendientes
-
-El desarrollo activo, seguimiento progresivo y los hitos de escalabilidad a nivel institucional se gestionan de manera centralizada en el archivo local de tareas.
-
-> 👉 **Revisa el archivo [tasks.md](./tasks.md) para consultar el progreso, Backlog, requerimientos técnicos y pendientes activos de MLOps.**
-
----
 
 ## 🚀 Ejecución y Despliegue (Docker)
 

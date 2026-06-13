@@ -10,6 +10,7 @@ Este repositorio es un **Motor Avanzado de Retrieval-Augmented Generation (RAG)*
 ## Stack Base
 - Python 3.12
 - `uv` para gestión de dependencias (`pyproject.toml` estricto con PyTorch `2.6.0+cu124` y ecosistema LangChain 1.x)
+- `langgraph` para orquestación agentiva y cíclica
 - FastAPI / Pydantic para APIs y validación
 - PostgreSQL / Redis / Qdrant para persistencia y búsqueda vectorial
 - Docker para infraestructura
@@ -21,7 +22,6 @@ El repositorio está agrupado en directorios lógicos y encapsulados:
 AxiomRAG/
 ├── README.md
 ├── ARCHITECTURE.md
-├── TASKS.md
 ├── agents.md              ← (Este archivo) Reglas y mapa cognitivo
 ├── docs/                  ← Base de conocimiento de arquitectura (flujos, límites, CVEs)
 ├── scripts/               ← Puntos de entrada MLOps (ej. run_ingestion.py, test_retrieval.py)
@@ -76,3 +76,9 @@ Si debes modificar código o expandir el framework, toma estas salvaguardas arqu
 - Sé conciso pero completo
 - Explica RAZÓN de cambios
 - Propón alternativas si hay trade-offs
+
+## 🧱 Directrices Estrictas de Desarrollo (AxiomRAG Agentivo v2)
+- **Preservación del Rendimiento:** Está prohibido sustituir las consultas optimizadas a Qdrant o el cálculo local de BM25 por integraciones genéricas preconstruidas de LangChain si estas degradan los tiempos de respuesta inferiores al segundo actuales.
+- **Encapsulamiento de Abstracciones:** El motor de búsqueda híbrido se debe exponer extendiendo la clase abstracta `BaseRetriever` de LangChain.
+- **Estructura del Estado del Grafo:** Todo el flujo se controlará a través de un `StateGraph` de LangGraph, donde el estado (`GraphState`) rastreará estrictamente de forma asíncrona la query original, queries expandidas, documentos recuperados, puntuaciones de relevancia, conteo de re-intentos de bucles y la respuesta final generada.
+- **Manejo de Errores y Fallbacks:** Se mantendrán los mecanismos defensivos actuales (fallbacks si falla la API principal), integrándolos como rutas alternativas o nodos de contingencia dentro del grafo.

@@ -41,10 +41,10 @@ def agent_mlops_setup():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-@pytest.mark.integration
-def test_agent_parent_context_injection_and_chain(mocker, agent_mlops_setup):
+@pytest.mark.asyncio
+async def test_agent_parent_context_injection_and_chain(mocker, agent_mlops_setup):
     """
-    Verifica la inyección del contexto PADRE TOTAL evitando el bloqueo de Pydantic.
+    Verifica la inyección del contexto PADRE TOTAL y la ejecución del Grafo de Estados.
     """
     # 1. Parcheamos el Retriever para inyectar datos controlados (Hito 2.2)
     mock_docs = [
@@ -53,17 +53,27 @@ def test_agent_parent_context_injection_and_chain(mocker, agent_mlops_setup):
             metadata={"relevance_score": 0.88, "origen": "auditoria.pdf", "categoria": "Ingeniería"}
         )
     ]
-    mocker.patch.object(agent_mlops_setup.retriever, 'search', return_value=mock_docs)
+    mocker.patch("src.retrieval.advanced_retrieval.AdvancedRetriever.search", return_value=mock_docs)
 
-    # 2. Solución Crítica: Parchamos la ejecución del LLM en la clase base de LangChain
-    # Esto evita el error "RunnableSequence object has no field invoke"
-    mock_ai_message = AIMessage(content="El motor CX-490 explotó por microfisuras. [Fuente: auditoria.pdf | Categoría: Ingeniería]")
-    
-    # Parchamos el método interno que LangChain llama finalmente
-    mocker.patch("langchain_openai.ChatOpenAI.invoke", return_value=mock_ai_message)
+    # 2. Solución Crítica: Parchamos la ejecución asíncrona del LLM
+    # Simulamos dinámicamente las respuestas según la llamada del nodo (JSON vs Texto final)
+    async def mock_ainvoke(messages_input, *args, **kwargs):
+        text = str(messages_input)
+        if "queries" in text:
+            return AIMessage(content='{"queries": ["motor failure", "CX-490 issue"]}')
+        elif "relevance" in text:
+            return AIMessage(content='{"relevance": "yes"}')
+        elif "grounded" in text:
+            return AIMessage(content='{"grounded": "yes"}')
+        elif "useful" in text:
+            return AIMessage(content='{"useful": "yes"}')
+        else:
+            return AIMessage(content="El motor CX-490 explotó por microfisuras. [Fuente: auditoria.pdf | Categoría: Ingeniería]")
+            
+    mocker.patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=mock_ainvoke)
 
-    # Acción QA
-    resultado = agent_mlops_setup.ask("¿Por qué falló el motor?", session_id="test_qa_final")
+    # Acción QA (asíncrona)
+    resultado = await agent_mlops_setup.ask("¿Por qué falló el motor?", session_id="test_qa_final")
 
     # Assertions
     assert "microfisuras" in resultado["respuesta"]
