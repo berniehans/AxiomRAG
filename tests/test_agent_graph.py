@@ -29,19 +29,34 @@ async def test_graph_full_flow_success(mocker, mock_retriever):
     """
     agent = RAGAgent(retriever=mock_retriever)
     
-    # Mock de las llamadas a ChatOpenAI
+    from src.agent.rag_chain import (
+        ExpandedQueries, DocumentRelevance, HallucinationAudit, 
+        UtilityEvaluation, RefinedQuery
+    )
+
+    from langchain_core.runnables import RunnableLambda
+
+    # Mock for structured outputs
+    def mock_with_structured_output(schema, *args, **kwargs):
+        async def mock_chain_ainvoke(input, *args, **kwargs):
+            if schema == ExpandedQueries:
+                return ExpandedQueries(queries=["var1", "var2"])
+            elif schema == DocumentRelevance:
+                return DocumentRelevance(relevance="yes")
+            elif schema == HallucinationAudit:
+                return HallucinationAudit(grounded="yes")
+            elif schema == UtilityEvaluation:
+                return UtilityEvaluation(useful="yes")
+            elif schema == RefinedQuery:
+                return RefinedQuery(refined_query="refined")
+            return MagicMock()
+        return RunnableLambda(mock_chain_ainvoke)
+
+    mocker.patch("langchain_openai.ChatOpenAI.with_structured_output", side_effect=mock_with_structured_output)
+
+    # Mock for regular LLM calls
     async def mock_ainvoke(messages, *args, **kwargs):
-        text = str(messages)
-        if "queries" in text:
-            return AIMessage(content='{"queries": ["var1", "var2"]}')
-        elif "relevance" in text:
-            return AIMessage(content='{"relevance": "yes"}')
-        elif "grounded" in text:
-            return AIMessage(content='{"grounded": "yes"}')
-        elif "useful" in text:
-            return AIMessage(content='{"useful": "yes"}')
-        else:
-            return AIMessage(content="Respuesta simulada exitosa. [Fuente: local.pdf | Categoría: Ingeniería]")
+        return AIMessage(content="Respuesta simulada exitosa. [Fuente: local.pdf | Categoría: Ingeniería]")
             
     mocker.patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=mock_ainvoke)
     
@@ -59,25 +74,41 @@ async def test_graph_flow_fallback_web_search(mocker, mock_retriever):
     """
     agent = RAGAgent(retriever=mock_retriever)
     
-    # Mock de ChatOpenAI donde la relevancia local es NO
+    from src.agent.rag_chain import (
+        ExpandedQueries, DocumentRelevance, HallucinationAudit, 
+        UtilityEvaluation, RefinedQuery
+    )
+
+    from langchain_core.runnables import RunnableLambda
+
+    # Mock for structured outputs where relevance is no
+    def mock_with_structured_output(schema, *args, **kwargs):
+        async def mock_chain_ainvoke(input, *args, **kwargs):
+            if schema == ExpandedQueries:
+                return ExpandedQueries(queries=["var1", "var2"])
+            elif schema == DocumentRelevance:
+                return DocumentRelevance(relevance="no")
+            elif schema == HallucinationAudit:
+                return HallucinationAudit(grounded="yes")
+            elif schema == UtilityEvaluation:
+                return UtilityEvaluation(useful="yes")
+            elif schema == RefinedQuery:
+                return RefinedQuery(refined_query="refined")
+            return MagicMock()
+        return RunnableLambda(mock_chain_ainvoke)
+
+    mocker.patch("langchain_openai.ChatOpenAI.with_structured_output", side_effect=mock_with_structured_output)
+
+    # Mock de DDGS
+    mock_ddgs = MagicMock()
+    mock_ddgs.__enter__.return_value.text.return_value = [{"body": "Resultados de búsqueda externa en internet."}]
+    mocker.patch("duckduckgo_search.DDGS", return_value=mock_ddgs)
+
+    # Mock for regular LLM calls
     async def mock_ainvoke(messages, *args, **kwargs):
-        text = str(messages)
-        if "queries" in text:
-            return AIMessage(content='{"queries": ["var1", "var2"]}')
-        elif "relevance" in text:
-            return AIMessage(content='{"relevance": "no"}')  # Todos los docs locales son irrelevantes
-        elif "grounded" in text:
-            return AIMessage(content='{"grounded": "yes"}')
-        elif "useful" in text:
-            return AIMessage(content='{"useful": "yes"}')
-        else:
-            return AIMessage(content="Respuesta externa. [Fuente: Búsqueda Web (DuckDuckGo) | Categoría: Internet]")
+        return AIMessage(content="Respuesta externa. [Fuente: Búsqueda Web (DuckDuckGo) | Categoría: Internet]")
             
     mocker.patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=mock_ainvoke)
-    
-    # Mock de DuckDuckGoSearchRun
-    mock_ddg = mocker.patch("src.agent.rag_chain.DuckDuckGoSearchRun")
-    mock_ddg.return_value.run.return_value = "Resultados de búsqueda externa en internet."
     
     res = await agent.ask("¿Cuál es la consulta?", session_id="test_fallback_session")
     

@@ -1,19 +1,19 @@
 import time
 import json
 import asyncio
-from typing import Dict, List, Optional, Any, TypedDict, cast, Type
+from typing import Dict, List, Optional, Any, TypedDict, cast, Type, Annotated
+import operator
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.documents import Document
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+
 from src.llm_factory import get_llm
-from src.retrieval.query_expansion import expand_query_async
 from src.utils.logging_config import setup_logger
 from src.config import settings
 from src.exceptions import LLMGenerationError
@@ -21,444 +21,354 @@ import openai
 
 logger = setup_logger(__name__)
 
-class DuckDuckGoSearchRun:
-    """Wrapper para realizar búsquedas en DuckDuckGo utilizando la biblioteca duckduckgo_search de forma directa."""
-    def run(self, query: str) -> str:
-        from duckduckgo_search import DDGS
-        try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=5))
-                if results:
-                    return " ".join([r.get("body", r.get("snippet", "")) for r in results if r.get("body") or r.get("snippet")])
-        except Exception as e:
-            logger.error(f"Error executing custom DuckDuckGo search: {e}")
-        return "No good DuckDuckGo Search Result was found"
+# ==========================================
+# 1. ESQUEMAS DE CONTROL (STRUCTURED OUTPUT)
+# ==========================================
 
-# Memoria global en RAM (Dict Store) para el control de sesiones
-_store = {}
+class ExpandedQueries(BaseModel):
+    queries: List[str] = Field(
+        description="Exactly 3 technical search query variations, synonyms, or acronyms of the original query."
+    )
 
-def get_session_history(session_id: str) -> BaseChatMessageHistory:
-    """Invoca o crea la línea de tiempo de mensajes para una sesión particular."""
-    if session_id not in _store:
-        _store[session_id] = InMemoryChatMessageHistory()
-        logger.info(f"Nueva sesión conversacional iniciada con ID: {session_id}")
-    return _store[session_id]
+class DocumentRelevance(BaseModel):
+    relevance: str = Field(
+        description="Determine if the document is relevant to the user query. Must be 'yes' or 'no'."
+    )
 
+class HallucinationAudit(BaseModel):
+    grounded: str = Field(
+        description="Determine if the response is completely grounded in the provided context. Must be 'yes' or 'no'."
+    )
+
+class UtilityEvaluation(BaseModel):
+    useful: str = Field(
+        description="Determine if the response directly and usefully answers the question. Must be 'yes' or 'no'."
+    )
+
+class RefinedQuery(BaseModel):
+    refined_query: str = Field(
+        description="Optimized and rewritten user query to maximize vector store matching."
+    )
+
+# ==========================================
+# 2. DEFINICIÓN DEL ESTADO CON REDUCERS
+# ==========================================
+
+class OverwriteList(list):
+    """Subclase de list para indicar al reducer que debe sobrescribir el estado en lugar de fusionar."""
+    pass
+
+def merge_documents(old_docs: List[Document], new_docs: List[Document]) -> List[Document]:
+    """Reducer senior para evitar duplicados en el estado manteniendo el orden."""
+    if isinstance(new_docs, OverwriteList):
+        return list(new_docs)
+    seen = set(d.page_content.strip() for d in old_docs)
+    merged = list(old_docs)
+    for d in new_docs:
+        content = d.page_content.strip()
+        if content not in seen:
+            seen.add(content)
+            merged.append(d)
+    return merged
 
 class GraphState(TypedDict):
     original_query: str
     expanded_queries: List[str]
-    retrieved_documents: List[Document]
-    relevance_scores: List[float]
-    loop_count: int
+    # Usamos reducers para no machacar el estado en ciclos de auto-corrección
+    retrieved_documents: Annotated[List[Document], merge_documents]
+    loop_count: Annotated[int, operator.add] 
     final_answer: str
     session_id: str
     sources: List[Dict[str, Any]]
+    # Integramos la memoria conversacional dentro del ciclo de vida nativo de LangGraph
+    messages: Annotated[List[BaseMessage], operator.add]
 
+# ==========================================
+# 3. NODOS AISLADOS (TESTEABLES / DECOUPLED)
+# ==========================================
+
+async def expand_query_node(state: GraphState) -> Dict[str, Any]:
+    query = state["original_query"]
+    logger.info(f"[Grafo] Expandiendo consulta original: '{query}'")
+    
+    llm = ChatOpenAI(
+        base_url=settings.OPENROUTER_BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+        model=settings.OPENROUTER_FAST_MODEL,
+        temperature=0.0,
+        extra_body={"reasoning_effort": "low"}
+    )
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Eres un experto en optimización de búsquedas técnicas. Genera exactamente 3 variaciones precisas."),
+        ("human", "Consulta original: {query}")
+    ])
+    
+    chain = prompt | llm.with_structured_output(ExpandedQueries)
+    try:
+        res = await chain.ainvoke({"query": query})
+        return {"expanded_queries": res.queries}
+    except Exception as e:
+        logger.error(f"[Grafo] Error al expandir consulta: {e}")
+        return {"expanded_queries": []}
+
+
+async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
+    query = state["original_query"]
+    docs = state.get("retrieved_documents", [])
+    if not docs:
+        return {"retrieved_documents": []}
+        
+    logger.info(f"[Grafo] Evaluando relevancia de {len(docs)} documentos en paralelo...")
+    
+    # Reutilizamos la misma instancia del LLM configurada para JSON/Structured Output
+    llm = ChatOpenAI(
+        base_url=settings.OPENROUTER_BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+        model=settings.OPENROUTER_FAST_MODEL,
+        temperature=0.0
+    ).with_structured_output(DocumentRelevance)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Determina si el documento es relevante para responder la consulta. Responde JSON con 'relevance': 'yes' o 'no'."),
+        ("human", "Consulta: {query}\n\nDocumento:\n{doc_content}")
+    ])
+    chain = prompt | llm
+
+    async def grade_doc(doc: Document) -> Optional[Document]:
+        try:
+            res = await chain.ainvoke({"query": query, "doc_content": doc.page_content})
+            if res.relevance.lower() == "yes":
+                return doc
+        except Exception as e:
+            logger.warning(f"Error evaluando relevancia (fallback acepta doc): {e}")
+            return doc
+        return None
+        
+    # Concurrencia real estructurada
+    tasks = [grade_doc(d) for d in docs]
+    results = await asyncio.gather(*tasks)
+    filtered = [d for d in results if d is not None]
+    
+    # Hack Senior: Limpiamos la lista vieja forzando un estado limpio mediante el return
+    return {"retrieved_documents": OverwriteList(filtered)}
+
+
+async def generate_answer_node(state: GraphState) -> Dict[str, Any]:
+    query = state["original_query"]
+    docs = state.get("retrieved_documents", [])
+    
+    if not docs:
+        return {"final_answer": "No tengo suficiente información para responder.", "sources": []}
+        
+    logger.info(f"[Grafo] Generando respuesta final con LLM estructurado de razonamiento alto...")
+    
+    sys_prompt = """Eres un asistente corporativo experto. Fundamenta tus respuestas EXCLUSIVAMENTE en el contexto recuperado.
+    PROHIBIDO alucinar. Incluye al final el formato estricto: [Fuente: <valor_origen> | Categoría: <valor_categoria>].
+    
+    Contexto:
+    {context}"""
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", sys_prompt),
+        MessagesPlaceholder(variable_name="messages"),
+        ("human", "{question}")
+    ])
+    
+    context_str = "\n\n".join([f"[origen: {d.metadata.get('origen', 'Local')} | categoria: {d.metadata.get('categoria', 'General')}]\n{d.page_content}" for d in docs])
+    
+    llm = ChatOpenAI(
+        base_url=settings.OPENROUTER_BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+        model=settings.OPENROUTER_DEFAULT_MODEL,
+        temperature=0.0,
+        extra_body={"reasoning_effort": "high"}
+    )
+    chain = prompt | llm
+    
+    try:
+        response_msg = await chain.ainvoke({
+            "question": query,
+            "context": context_str,
+            "messages": state["messages"]
+        })
+        answer_text = response_msg.content
+    except Exception as e:
+        logger.error(f"Error en generación LLM: {e}")
+        raise LLMGenerationError(f"Fallo en nodo de generación: {e}")
+        
+    src_map = [
+        {
+            "origen": d.metadata.get('origen', 'Local'),
+            "categoria": d.metadata.get('categoria', 'General'),
+            "score": float(d.metadata.get('relevance_score', 0.0))
+        }
+        for d in docs
+    ]
+    
+    return {
+        "final_answer": answer_text,
+        "sources": src_map,
+        # Guardamos la interacción de forma nativa en la línea de tiempo de LangGraph
+        "messages": [HumanMessage(content=query), AIMessage(content=answer_text)]
+    }
+
+
+async def refine_query_node(state: GraphState) -> Dict[str, Any]:
+    query = state["original_query"]
+    logger.info(f"[Grafo] Auto-Corrección: Refinando consulta original para romper el bucle...")
+    
+    llm = ChatOpenAI(
+        base_url=settings.OPENROUTER_BASE_URL,
+        api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+        model=settings.OPENROUTER_FAST_MODEL,
+        temperature=0.0
+    ).with_structured_output(RefinedQuery)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Reescribe la consulta para maximizar el hit-rate del motor RAG. Devuelve un JSON con 'refined_query'."),
+        ("human", "Consulta fallida anterior: {query}")
+    ])
+    
+    try:
+        res = await (prompt | llm).ainvoke({"query": query})
+        return {"original_query": res.refined_query, "loop_count": 1} # El reducer suma +1 automáticamente
+    except Exception as e:
+        logger.error(f"Error al refinar: {e}")
+        return {"loop_count": 1}
+
+# ==========================================
+# 4. ORQUESTADOR Y COMPILACIÓN
+# ==========================================
 
 class RAGAgent:
-    """Agente Conversacional con Memoria Corta, Grafo de Estados (Self-Corrective RAG) y Guardrails."""
+    """Agente RAG Empresarial Asíncrono con Ciclo de Vida y Memoria Centralizada."""
 
     def __init__(self, retriever: Any) -> None:
         self.retriever = retriever
-        self.confidence_threshold = 0.15
         self.graph = self._build_graph()
 
     def _build_graph(self) -> Any:
-        """Construye y compila la topología del StateGraph con LangGraph."""
+        workflow = StateGraph(GraphState)
         
-        async def expand_query_node(state: GraphState) -> Dict[str, Any]:
-            query = state["original_query"]
-            logger.info(f"[Grafo] Expandiendo consulta original: '{query}'")
-            
-            llm = ChatOpenAI(
-                base_url=settings.OPENROUTER_BASE_URL,
-                api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
-                model=settings.OPENROUTER_FAST_MODEL,
-                temperature=0.0,
-                timeout=settings.LLM_TIMEOUT,
-                max_retries=settings.LLM_MAX_RETRIES,
-                extra_body={"reasoning_effort": "low"}
-            )
-            
-            class ExpandedQueries(BaseModel):
-                queries: List[str] = Field(
-                    description="Exactly 3 technical search query variations (queries), synonyms, or acronyms of the original query."
-                )
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", (
-                    "Eres un experto en optimización de búsquedas técnicas. Tu tarea es generar variantes de búsqueda (queries) "
-                    "que ayuden a encontrar la información relevante en una base de datos vectorial y motor léxico. "
-                    "Genera exactamente 3 variaciones técnicas y precisas de la consulta original."
-                )),
-                ("human", "Consulta original: {query}")
-            ])
-            
-            chain = prompt | llm.with_structured_output(ExpandedQueries)
-            try:
-                res = await chain.ainvoke({"query": query})
-                expanded = res.queries
-                logger.info(f"[Grafo] Variantes de queries generadas: {expanded}")
-                return {"expanded_queries": expanded}
-            except Exception as e:
-                logger.error(f"[Grafo] Error al expandir consulta: {e}. Usando fallback vacío.")
-                return {"expanded_queries": []}
-
-        async def retrieve_local_node(state: GraphState) -> Dict[str, Any]:
-            query = state["original_query"]
-            expanded = state.get("expanded_queries", [])
-            all_queries = [query] + expanded
-            
-            logger.info(f"[Grafo] Recuperando localmente para consultas: {all_queries}")
-            
-            tasks = [self.retriever.ainvoke(q) for q in all_queries]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            seen_contents = set()
-            unique_docs = []
-            for res in results:
-                if isinstance(res, list):
-                    for doc in res:
-                        c = doc.page_content.strip()
-                        if c not in seen_contents:
-                            seen_contents.add(c)
-                            unique_docs.append(doc)
-                            
-            logger.info(f"[Grafo] Recuperados {len(unique_docs)} documentos únicos (Padres Completos).")
-            return {"retrieved_documents": unique_docs}
-
-        async def grade_documents_node(state: GraphState) -> Dict[str, Any]:
-            query = state["original_query"]
-            docs = state.get("retrieved_documents", [])
-            if not docs:
-                return {"retrieved_documents": []}
-                
-            logger.info(f"[Grafo] Evaluando relevancia de {len(docs)} documentos...")
-            llm = get_llm(require_json=True)
-            
-            async def grade_doc(doc: Document) -> Optional[Document]:
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", (
-                        "Eres un evaluador de relevancia. Tu tarea es determinar si un fragmento de documento recuperado "
-                        "es relevante para responder a la consulta del usuario. Retorna estrictamente un objeto JSON con la "
-                        "clave 'relevance' y valor 'yes' (si es relevante) o 'no' (si no es relevante)."
-                    )),
-                    ("human", "Consulta: {query}\n\nDocumento:\n{doc_content}")
-                ])
-                chain = prompt | llm
-                try:
-                    res = await chain.ainvoke({"query": query, "doc_content": doc.page_content})
-                    content = res.content.strip()
-                    if content.startswith("```"):
-                        if content.startswith("```json"):
-                            content = content[7:]
-                        else:
-                            content = content[3:]
-                        if content.endswith("```"):
-                            content = content[:-3]
-                        content = content.strip()
-                    data = json.loads(content)
-                    if data.get("relevance", "").lower() == "yes":
-                        return doc
-                except Exception as e:
-                    logger.warning(f"Error evaluando relevancia (documento aceptado por fallback): {e}")
-                    return doc
-                return None
-                
-            tasks = [grade_doc(d) for d in docs]
-            results = await asyncio.gather(*tasks)
-            filtered = [d for d in results if d is not None]
-            
-            logger.info(f"[Grafo] {len(filtered)} de {len(docs)} documentos pasaron el filtro de relevancia del LLM.")
-            return {"retrieved_documents": filtered}
-
-        async def web_search_fallback_node(state: GraphState) -> Dict[str, Any]:
-            query = state["original_query"]
-            logger.warning(f"[Grafo/Fallback] Relevancia insuficiente en documentos locales. Iniciando búsqueda externa para: '{query}'")
-            
-            try:
-                search = DuckDuckGoSearchRun()
-                search_result = await asyncio.to_thread(search.run, query)
-                web_doc = Document(
-                    page_content=search_result,
-                    metadata={"origen": "Búsqueda Web (DuckDuckGo)", "categoria": "Internet", "relevance_score": 0.5}
-                )
-                return {"retrieved_documents": [web_doc]}
-            except Exception as e:
-                logger.error(f"[Grafo/Fallback] Error al ejecutar búsqueda web externa: {e}")
-                return {"retrieved_documents": []}
-
-        async def generate_answer_node(state: GraphState) -> Dict[str, Any]:
-            query = state["original_query"]
-            docs = state.get("retrieved_documents", [])
-            session_id = state.get("session_id", "default_session")
-            
-            if not docs:
-                return {
-                    "final_answer": "No tengo suficiente información almacenada ni en la red para responder a esta consulta.",
-                    "sources": []
-                }
-                
-            logger.info(f"[Grafo] Generando respuesta final basada en {len(docs)} documentos...")
-            
-            sys_prompt = """Eres un asistente corporativo experto. Tienes que fundamentar tus respuestas EXCLUSIVAMENTE en el contexto recuperado proporcionado a continuación.
-            PROHIBIDO usar conocimiento general. Si el contexto es insuficiente o irrelevante (como preguntas de geografía en un entorno técnico), responde únicamente con la negativa de seguridad. No alucines ni inventes respuestas bajo ninguna circunstancia.
-            Si el contexto contiene fórmulas o pasos técnicos, cítalos textualmente. No parafrasees conceptos científicos si no estás 100% seguro.
-            Cuando ofrezcas información, DEBES incluir al final de tu respuesta la fuente y la categoría del documento recuperado usando EXACTAMENTE el formato: [Fuente: <valor_origen> | Categoría: <valor_categoria>].
-            Responde directamente en texto claro, detallando y explicando la información técnica recuperada.
-
-            Contexto Recuperado:
-            {context}
-            """
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", sys_prompt),
-                MessagesPlaceholder(variable_name="history"),
-                ("human", "{question}")
-            ])
-            
-            history = get_session_history(session_id)
-            history_messages = history.messages
-            
-            context_str = "\n\n".join([f"[valor_origen: {d.metadata.get('origen', 'Desconocido')} | valor_categoria: {d.metadata.get('categoria', 'General')}]\n{d.page_content}" for d in docs])
-            llm = ChatOpenAI(
-                base_url=settings.OPENROUTER_BASE_URL,
-                api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
-                model=settings.OPENROUTER_DEFAULT_MODEL,
-                temperature=0.0,
-                timeout=settings.LLM_TIMEOUT,
-                max_retries=settings.LLM_MAX_RETRIES,
-                max_tokens=1000,
-                max_completion_tokens=1000,
-                extra_body={"reasoning_effort": "high"}
-            )
-            chain = prompt | llm | StrOutputParser()
-            
-            try:
-                response = await chain.ainvoke({
-                    "question": query,
-                    "context": context_str,
-                    "history": history_messages
-                })
-            except (TimeoutError, openai.APITimeoutError) as e:
-                logger.error(f"Timeout al generar respuesta en sesión '{session_id}': {e}")
-                response = "La consulta ha superado el tiempo límite de espera y ha sido cancelada por seguridad."
-            except Exception as e:
-                logger.error(f"Error en generación LLM: {e}")
-                raise LLMGenerationError(f"Error generando respuesta del LLM MLOps: {e}") from e
-                
-            history.add_user_message(query)
-            history.add_ai_message(response)
-            
-            src_map = [
-                {
-                    "origen": d.metadata.get('origen', 'Desconocido'), 
-                    "categoria": d.metadata.get('categoria', 'General'),
-                    "score": float(d.metadata.get('relevance_score', 0.0))
-                } 
-                for d in docs
-            ]
-            
-            return {
-                "final_answer": response,
-                "sources": src_map
-            }
-
-        async def refine_query_node(state: GraphState) -> Dict[str, Any]:
-            query = state["original_query"]
-            loop_count = state.get("loop_count", 0)
-            logger.info(f"[Grafo] Auto-Corrección: Refinando consulta original '{query}'...")
-            
-            llm = get_llm(require_json=True)
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", (
-                    "Eres un experto en optimización de consultas RAG. Tu tarea es reescribir la consulta del usuario "
-                    "para mejorar la precisión y exhaustividad de la búsqueda vectorial y léxica, considerando que el "
-                    "intento anterior falló debido a alucinaciones o falta de utilidad. "
-                    "Retorna un objeto JSON con la clave 'refined_query' que contenga la nueva consulta optimizada."
-                )),
-                ("human", "Consulta original: {query}")
-            ])
-            chain = prompt | llm
-            refined = query
-            try:
-                res = await chain.ainvoke({"query": query})
-                content = res.content.strip()
-                if content.startswith("```"):
-                    if content.startswith("```json"):
-                        content = content[7:]
-                    else:
-                        content = content[3:]
-                    if content.endswith("```"):
-                        content = content[:-3]
-                    content = content.strip()
-                data = json.loads(content)
-                refined = data.get("refined_query", query)
-                logger.info(f"[Grafo] Consulta optimizada (Loop {loop_count + 1}): '{query}' -> '{refined}'")
-            except Exception as e:
-                logger.error(f"[Grafo] Error al refinar consulta: {e}")
-                
-            return {
-                "original_query": refined,
-                "loop_count": loop_count + 1
-            }
-
-        workflow = StateGraph(cast(Type[GraphState], GraphState))
-        
+        # Inyección de nodos desacoplados
         workflow.add_node("expand_query", expand_query_node)
-        workflow.add_node("retrieve_local", retrieve_local_node)
+        workflow.add_node("retrieve_local", self._retrieve_local_node) # Requiere acceso a self.retriever
         workflow.add_node("grade_documents", grade_documents_node)
-        workflow.add_node("web_search_fallback", web_search_fallback_node)
+        workflow.add_node("web_search_fallback", self._web_search_fallback_node)
         workflow.add_node("generate_answer", generate_answer_node)
         workflow.add_node("refine_query", refine_query_node)
         
+        # Construcción de bordes fijos
         workflow.add_edge(START, "expand_query")
         workflow.add_edge("expand_query", "retrieve_local")
         workflow.add_edge("retrieve_local", "grade_documents")
         
-        def route_after_grading(state: GraphState) -> str:
-            docs = state.get("retrieved_documents", [])
-            if not docs:
-                return "web_search_fallback"
-            return "generate_answer"
-            
+        # Enrutamiento condicional post-evaluación
         workflow.add_conditional_edges(
             "grade_documents",
-            route_after_grading,
-            {
-                "web_search_fallback": "web_search_fallback",
-                "generate_answer": "generate_answer"
-            }
+            self._route_after_grading,
+            {"web_search_fallback": "web_search_fallback", "generate_answer": "generate_answer"}
         )
-        
         workflow.add_edge("web_search_fallback", "generate_answer")
         
-        async def check_groundedness_and_utility(state: GraphState) -> str:
-            docs = state.get("retrieved_documents", [])
-            answer = state.get("final_answer", "")
-            query = state["original_query"]
-            loop_count = state.get("loop_count", 0)
-            
-            if not docs or not answer or "No tengo suficiente información" in answer:
-                return "end"
-                
-            if loop_count >= 3:
-                logger.warning(f"[Grafo/Auto-Corrección] Límite de re-intentos alcanzado ({loop_count}). Saltando bucle.")
-                return "end"
-                
-            llm = get_llm(require_json=True)
-            context_str = "\n\n".join([d.page_content for d in docs])
-            
-            prompt_grounded = ChatPromptTemplate.from_messages([
-                ("system", (
-                    "Eres un auditor de alucinaciones. Tu tarea es verificar si la respuesta generada está completamente "
-                    "fundamentada y respaldada por los documentos de contexto proporcionados. Retorna estrictamente un objeto JSON "
-                    "con la clave 'grounded' y valor 'yes' (si está fundamentada sin inventar nada) o 'no' (si contiene alucinaciones)."
-                )),
-                ("human", "Contexto:\n{context}\n\nRespuesta:\n{answer}")
-            ])
-            chain_grounded = prompt_grounded | llm
-            try:
-                res_g = await chain_grounded.ainvoke({"context": context_str, "answer": answer})
-                content = res_g.content.strip()
-                if content.startswith("```"):
-                    if content.startswith("```json"):
-                        content = content[7:]
-                    else:
-                        content = content[3:]
-                    if content.endswith("```"):
-                        content = content[:-3]
-                    content = content.strip()
-                data_g = json.loads(content)
-                grounded = data_g.get("grounded", "").lower() == "yes"
-            except Exception as e:
-                logger.warning(f"Error evaluando groundedness: {e}")
-                grounded = True
-                
-            if not grounded:
-                logger.warning("[Grafo/Auto-Corrección] Groundedness check fallido. Activando re-enrutamiento.")
-                return "refine"
-                
-            prompt_utility = ChatPromptTemplate.from_messages([
-                ("system", (
-                    "Eres un evaluador de utilidad. Tu tarea es determinar si la respuesta generada realmente responde a "
-                    "la pregunta del usuario de manera útil. Retorna estrictamente un objeto JSON con la clave 'useful' "
-                    "y valor 'yes' (si responde de manera útil) o 'no' (si no responde adecuadamente)."
-                )),
-                ("human", "Pregunta:\n{question}\n\nRespuesta:\n{answer}")
-            ])
-            chain_utility = prompt_utility | llm
-            try:
-                res_u = await chain_utility.ainvoke({"question": query, "answer": answer})
-                content = res_u.content.strip()
-                if content.startswith("```"):
-                    if content.startswith("```json"):
-                        content = content[7:]
-                    else:
-                        content = content[3:]
-                    if content.endswith("```"):
-                        content = content[:-3]
-                    content = content.strip()
-                data_u = json.loads(content)
-                useful = data_u.get("useful", "").lower() == "yes"
-            except Exception as e:
-                logger.warning(f"Error evaluando utilidad: {e}")
-                useful = True
-                
-            if not useful:
-                logger.warning("[Grafo/Auto-Corrección] Utility check fallido. Activando re-enrutamiento.")
-                return "refine"
-                
-            return "end"
-
-        async def route_after_generation(state: GraphState) -> str:
-            decision = await check_groundedness_and_utility(state)
-            if decision == "refine":
-                return "refine_query"
-            return END
-            
+        # Enrutamiento condicional post-generación (Self-Correction Loop)
         workflow.add_conditional_edges(
             "generate_answer",
-            route_after_generation,
-            {
-                "refine_query": "refine_query",
-                "__end__": END
-            }
+            self._route_after_generation,
+            {"refine_query": "refine_query", "__end__": END}
         )
-        
         workflow.add_edge("refine_query", "expand_query")
         
-        logger.info("Compilando StateGraph de LangGraph...")
         return workflow.compile(checkpointer=MemorySaver())
 
+    async def _retrieve_local_node(self, state: GraphState) -> Dict[str, Any]:
+        all_queries = [state["original_query"]] + state.get("expanded_queries", [])
+        tasks = [self.retriever.ainvoke(q) for q in all_queries]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        flat_docs = []
+        for res in results:
+            if isinstance(res, list):
+                flat_docs.extend(res)
+        return {"retrieved_documents": flat_docs}
+
+    async def _web_search_fallback_node(self, state: GraphState) -> Dict[str, Any]:
+        from duckduckgo_search import DDGS
+        query = state["original_query"]
+        try:
+            # Forzamos ejecución sin bloqueo de hilos
+            loop = asyncio.get_running_loop()
+            def ddg_sync():
+                with DDGS() as ddgs:
+                    return " ".join([r.get("body", "") for r in list(ddgs.text(query, max_results=4))])
+            
+            search_result = await loop.run_in_executor(None, ddg_sync)
+            return {"retrieved_documents": [Document(page_content=search_result, metadata={"origen": "Búsqueda Web (DuckDuckGo)", "categoria": "Internet", "relevance_score": 0.5})]}
+        except Exception as e:
+            return {"retrieved_documents": []}
+
+    def _route_after_grading(self, state: GraphState) -> str:
+        return "web_search_fallback" if not state.get("retrieved_documents") else "generate_answer"
+
+    async def _route_after_generation(self, state: GraphState) -> str:
+        docs = state.get("retrieved_documents", [])
+        answer = state.get("final_answer", "")
+        if not docs or not answer or state.get("loop_count", 0) >= 2:
+            return END
+
+        # PARALELIZACIÓN DE AUDITORÍA (Groundedness + Utility)
+        llm = ChatOpenAI(
+            base_url=settings.OPENROUTER_BASE_URL,
+            api_key=settings.OPENROUTER_API_KEY or "DUMMY_KEY",
+            model=settings.OPENROUTER_FAST_MODEL,
+            temperature=0.0
+        )
+        
+        c_grounded = ChatPromptTemplate.from_messages([
+            ("system", "Analiza alucinaciones. Responde JSON con 'grounded': 'yes' o 'no'."),
+            ("human", "Contexto:\n{context}\n\nRespuesta:\n{answer}")
+        ]) | llm.with_structured_output(HallucinationAudit)
+
+        c_utility = ChatPromptTemplate.from_messages([
+            ("system", "Evalúa utilidad de la respuesta. Responde JSON con 'useful': 'yes' o 'no'."),
+            ("human", "Pregunta:\n{question}\n\nRespuesta:\n{answer}")
+        ]) | llm.with_structured_output(UtilityEvaluation)
+
+        context_str = "\n\n".join([d.page_content for d in docs])
+        
+        # Disparamos ambas evaluaciones en un solo paso asíncrono concurrente
+        try:
+            g_res, u_res = await asyncio.gather(
+                c_grounded.ainvoke({"context": context_str, "answer": answer}),
+                c_utility.ainvoke({"question": state["original_query"], "answer": answer}),
+                return_exceptions=True
+            )
+            if (not isinstance(g_res, Exception) and g_res.grounded.lower() == "no") or \
+               (not isinstance(u_res, Exception) and u_res.useful.lower() == "no"):
+                return "refine_query"
+        except Exception as e:
+            logger.error(f"Error crítico en validaciones: {e}")
+            
+        return END
+
     async def ask(self, question: str, session_id: str = "default_session") -> Dict[str, Any]:
-        """Flujo Core: Ejecuta de forma asíncrona el StateGraph compilado."""
-        logger.info(f"Agente RAG - Procesando query con LangGraph: '{question}' (Sesión: {session_id})")
         start_time = time.time()
+        config = {"configurable": {"thread_id": session_id}}
         
         initial_state: GraphState = {
             "original_query": question,
             "expanded_queries": [],
             "retrieved_documents": [],
-            "relevance_scores": [],
             "loop_count": 0,
             "final_answer": "",
             "session_id": session_id,
-            "sources": []
+            "sources": [],
+            "messages": []
         }
         
-        config = {"configurable": {"thread_id": session_id}}
-        
-        try:
-            result_state = await self.graph.ainvoke(initial_state, config=config)
-        except Exception as e:
-            logger.error(f"Fallo crítico en ejecución del Grafo: {e}")
-            raise LLMGenerationError(f"Fallo crítico en ejecución de StateGraph: {e}") from e
-            
-        end_time = time.time()
-        gen_time = end_time - start_time
-        logger.info(f"Tiempo total de orquestación en Grafo: {gen_time:.4f} segundos")
+        result_state = await self.graph.ainvoke(initial_state, config=config)
+        gen_time = time.time() - start_time
         
         return {
             "respuesta": result_state.get("final_answer", ""),

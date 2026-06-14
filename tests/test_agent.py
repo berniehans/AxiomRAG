@@ -55,20 +55,32 @@ async def test_agent_parent_context_injection_and_chain(mocker, agent_mlops_setu
     ]
     mocker.patch("src.retrieval.advanced_retrieval.AdvancedRetriever.search", return_value=mock_docs)
 
-    # 2. Solución Crítica: Parchamos la ejecución asíncrona del LLM
-    # Simulamos dinámicamente las respuestas según la llamada del nodo (JSON vs Texto final)
+    # 2. Solución Crítica: Parchamos la ejecución asíncrona del LLM y de las salidas estructuradas
+    from src.agent.rag_chain import (
+        ExpandedQueries, DocumentRelevance, HallucinationAudit, 
+        UtilityEvaluation, RefinedQuery
+    )
+    from langchain_core.runnables import RunnableLambda
+
+    def mock_with_structured_output(schema, *args, **kwargs):
+        async def mock_chain_ainvoke(input, *args, **kwargs):
+            if schema == ExpandedQueries:
+                return ExpandedQueries(queries=["motor failure", "CX-490 issue"])
+            elif schema == DocumentRelevance:
+                return DocumentRelevance(relevance="yes")
+            elif schema == HallucinationAudit:
+                return HallucinationAudit(grounded="yes")
+            elif schema == UtilityEvaluation:
+                return UtilityEvaluation(useful="yes")
+            elif schema == RefinedQuery:
+                return RefinedQuery(refined_query="refined query text")
+            return MagicMock()
+        return RunnableLambda(mock_chain_ainvoke)
+
+    mocker.patch("langchain_openai.ChatOpenAI.with_structured_output", side_effect=mock_with_structured_output)
+
     async def mock_ainvoke(messages_input, *args, **kwargs):
-        text = str(messages_input)
-        if "queries" in text:
-            return AIMessage(content='{"queries": ["motor failure", "CX-490 issue"]}')
-        elif "relevance" in text:
-            return AIMessage(content='{"relevance": "yes"}')
-        elif "grounded" in text:
-            return AIMessage(content='{"grounded": "yes"}')
-        elif "useful" in text:
-            return AIMessage(content='{"useful": "yes"}')
-        else:
-            return AIMessage(content="El motor CX-490 explotó por microfisuras. [Fuente: auditoria.pdf | Categoría: Ingeniería]")
+        return AIMessage(content="El motor CX-490 explotó por microfisuras. [Fuente: auditoria.pdf | Categoría: Ingeniería]")
             
     mocker.patch("langchain_openai.ChatOpenAI.ainvoke", side_effect=mock_ainvoke)
 

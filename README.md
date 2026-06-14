@@ -15,7 +15,6 @@ El sistema integra componentes rigurosos para solventar los fallos típicos (alu
 - **Recuperación *"Parent-Child"*:** Implementación de separación estricta: Búsqueda focalizada vectorial sobre fragmentos agudos (Hijos Semánticos de 600 tokens) para obtener puntajes de precisión de ~0.95, combinada con la inyección del archivo Global (Padres Completos) al payload del LLM, erradicando el problema de la pérdida de contexto.
 - **Búsqueda Híbrida Ponderada:** Ensamble matemático (50/50 Ensemble) de motor léxico `CustomBM25Retriever` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches" en terminología técnica y acrónimos severos.
 - **Ingesta Asíncrona (Non-Blocking):** Pipeline encapsulado sobre `FastAPI BackgroundTasks`. Absorbe 289 documentos técnicos persistiendo la evaluación global sin detener el hilo principal ni agotar el Thread Pool de las peticiones HTTP del usuario.
-- **Arquitectura de Bajo Ruido (Warning-Free):** Eliminación total de advertencias de obsolescencia (`DeprecationWarning`) al inyectar stubs para VertexAI y proveer adaptadores nativos libres de `langchain-community`.
 
 ## 📊 Observabilidad y MLOps (Baseline Heurístico)
 
