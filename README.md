@@ -1,4 +1,4 @@
-# 🏢 Motor RAG de Grado Industrial con Reranking de sub-segundo
+# AxiomRAG
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue?style=for-the-badge&logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi)
