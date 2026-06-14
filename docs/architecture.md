@@ -11,13 +11,13 @@ El sistema RAG ha sido desdoblado en dos conductos de ejecución independientes 
 ### Fase Offline (Digestión e Ingesta de Datos)
 Encargada de transformar información no estructurada en un grafo vectorial altamente indexable:
 1. **Extracción Multimodal (`parsers.py`):** Limpia artefactos en archivos binarios complejos (PDF, DOCX, XLSX).
-2. **Segmentación Contextual (`chunking.py`):** Implementa un *Semantic Chunking* con solapamiento controlado (Overlap) usando `BAAI/bge-m3`. Se prefiere preservar la cohesión temática de los enunciados antes que depender de un corte rígido de caracteres.
+2. **Segmentación Contextual (`chunking.py`):** Implementa un *Semantic Chunking* personalizado (`CustomSemanticChunker`) usando distancias de coseno con embeddings locales (`BAAI/bge-m3`) y gradiente semántico. Se prefiere preservar la cohesión temática de los enunciados antes que depender de un corte rígido de caracteres.
 3. **Inyección Estructurada de Metadatos (`metadata_extractor.py`):** Usa `deepseek/deepseek-v4-flash` para rotular el fragmento (Categoria, Origen y Resumen hiperestricto de 20 palabras máximo). 
 
 ### Fase Online (Consulta y Generación)
 El cerebro en tiempo real que el usuario experimenta en el frontend:
-1. **Búsqueda Avanzada Híbrida:** Cruza simultáneamente un algoritmo Dense-Vector (Qdrant Local) y uno Sparse-Lexical (BM25 Auto-Recargable en RAM).
-2. **Atención por Cross-Encoder:** El Reranker evalúa qué nodos merecen atención prioritaria.
+1. **Búsqueda Avanzada Híbrida:** Cruza simultáneamente un algoritmo Dense-Vector (Qdrant Local) y uno Sparse-Lexical (`CustomBM25Retriever` auto-recargable en RAM).
+2. **Atención por Cross-Encoder:** El Reranker (`CustomHuggingFaceCrossEncoder` que envuelve `sentence-transformers`) evalúa qué nodos merecen atención prioritaria.
 3. **Decodificación Final (`rag_chain.py`):** Si aprueba los esquemas de seguridad, se extrae el macro-documento y LangChain canaliza el LLM Generativo (Asistente), liberando el *JSON Mode* e inyectando un volumen máximo de 1000 tokens para producir explicaciones matemáticas, técnicas o de programación extensas.
 
 ---

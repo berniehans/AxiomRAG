@@ -1,14 +1,13 @@
 import os
 import json
-from typing import List, Any
+from typing import List, Any, Callable, Iterable, Optional, Dict
 from langchain_core.documents import Document
 from langchain_classic.retrievers.ensemble import EnsembleRetriever
 from langchain_classic.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_classic.retrievers.parent_document_retriever import ParentDocumentRetriever
 import time
 from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
-from langchain_community.cross_encoders import HuggingFaceCrossEncoder
-from langchain_community.retrievers import BM25Retriever
+from langchain_core.cross_encoders import BaseCrossEncoder
 from langchain_classic.storage import LocalFileStore
 from langchain_core.stores import BaseStore
 from langchain_core.retrievers import BaseRetriever
@@ -24,6 +23,103 @@ logger = setup_logger(__name__)
 # Cache global para Singleton del Reranker
 _SHARED_RERANKER_MODEL = None
 
+class CustomHuggingFaceCrossEncoder(BaseCrossEncoder):
+    """Implementación personalizada de CrossEncoder utilizando sentence-transformers de forma directa."""
+    def __init__(self, model_name: str, model_kwargs: dict = None):
+        from sentence_transformers import CrossEncoder
+        kwargs = model_kwargs or {}
+        self.model = CrossEncoder(model_name, **kwargs)
+
+    def score(self, text_pairs: List[tuple[str, str]]) -> List[float]:
+        import numpy as np
+        scores = self.model.predict(text_pairs)
+        if isinstance(scores, np.ndarray):
+            return scores.tolist()
+        return list(scores)
+
+def default_preprocessing_func(text: str) -> List[str]:
+    return text.split()
+
+class CustomBM25Retriever(BaseRetriever):
+    """Recuperador léxico BM25 utilizando la biblioteca rank-bm25 directamente."""
+
+    vectorizer: Any = None
+    """ BM25 vectorizer."""
+    docs: List[Document] = Field(repr=False)
+    """ List of documents."""
+    k: int = 4
+    """ Number of documents to return."""
+    preprocess_func: Callable[[str], List[str]] = default_preprocessing_func
+    """ Preprocessing function to use on the text before BM25 vectorization."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+    )
+
+    @classmethod
+    def from_texts(
+        cls,
+        texts: Iterable[str],
+        metadatas: Optional[Iterable[dict]] = None,
+        ids: Optional[Iterable[str]] = None,
+        bm25_params: Optional[Dict[str, Any]] = None,
+        preprocess_func: Callable[[str], List[str]] = default_preprocessing_func,
+        **kwargs: Any,
+    ) -> "CustomBM25Retriever":
+        """Create a CustomBM25Retriever from a list of texts."""
+        try:
+            from rank_bm25 import BM25Okapi
+        except ImportError:
+            raise ImportError(
+                "Could not import rank_bm25, please install with `pip install rank_bm25`."
+            )
+
+        texts_processed = [preprocess_func(t) for t in texts]
+        bm25_params = bm25_params or {}
+        vectorizer = BM25Okapi(texts_processed, **bm25_params)
+        metadatas = metadatas or ({} for _ in texts)
+        if ids:
+            docs = [
+                Document(page_content=t, metadata=m, id=i)
+                for t, m, i in zip(texts, metadatas, ids)
+            ]
+        else:
+            docs = [
+                Document(page_content=t, metadata=m) for t, m in zip(texts, metadatas)
+            ]
+        return cls(
+            vectorizer=vectorizer, docs=docs, preprocess_func=preprocess_func, **kwargs
+        )
+
+    @classmethod
+    def from_documents(
+        cls,
+        documents: Iterable[Document],
+        *,
+        bm25_params: Optional[Dict[str, Any]] = None,
+        preprocess_func: Callable[[str], List[str]] = default_preprocessing_func,
+        **kwargs: Any,
+    ) -> "CustomBM25Retriever":
+        """Create a CustomBM25Retriever from a list of Documents."""
+        texts, metadatas, ids = zip(
+            *((d.page_content, d.metadata, d.id) for d in documents)
+        )
+        return cls.from_texts(
+            texts=texts,
+            bm25_params=bm25_params,
+            metadatas=metadatas,
+            ids=ids,
+            preprocess_func=preprocess_func,
+            **kwargs,
+        )
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        processed_query = self.preprocess_func(query)
+        return_docs = self.vectorizer.get_top_n(processed_query, self.docs, n=self.k)
+        return return_docs
+
 class TimedCrossEncoderReranker(CrossEncoderReranker):
     """Compresor custom que propaga relevance_score estricto y mide tiempo exacto."""
     def compress_documents(self, documents: List[Document], query: str, callbacks=None) -> List[Document]:
@@ -35,13 +131,13 @@ class TimedCrossEncoderReranker(CrossEncoderReranker):
         if not documents:
             return []
             
-        # Garantía de puente CPU a GPU para inferencia rápida
+        # Carga del modelo en GPU para acelerar la inferencia si está disponible
         if hasattr(self.model, "model") and torch.cuda.is_available():
             self.model.model.to("cuda")
             
         texts = [[query, doc.page_content] for doc in documents]
         
-        # Procesamiento secuencial explícito (batch_size=1) para proteger la VRAM
+        # Procesamiento secuencial de textos para optimizar el uso de VRAM
         scores = []
         for txt in texts:
             scores.append(self.model.score([txt])[0])
@@ -56,7 +152,7 @@ class TimedCrossEncoderReranker(CrossEncoderReranker):
         final_docs = []
         for doc, score in top_docs:
             new_metadata = doc.metadata.copy()
-            # Forzamos conversión a float puro (para evitar anomalías 0.000 generadas por tensores o floats de numpy)
+            # Conversión del score a tipo float nativo de Python
             new_metadata["relevance_score"] = float(score)
             final_docs.append(Document(page_content=doc.page_content, metadata=new_metadata))
             
@@ -146,7 +242,7 @@ class AdvancedRetriever(BaseRetriever):
                     device = "cuda"
                     
                 _kwargs = {"device": device}
-                _SHARED_RERANKER_MODEL = HuggingFaceCrossEncoder(
+                _SHARED_RERANKER_MODEL = CustomHuggingFaceCrossEncoder(
                     model_name=settings.RERANKER_MODEL_NAME, 
                     model_kwargs=_kwargs
                 )
@@ -203,7 +299,7 @@ class AdvancedRetriever(BaseRetriever):
             all_docs = self.docstore.mget(keys)
             valid_docs = [d for d in all_docs if d is not None]
             if valid_docs:
-                self.bm25_retriever = BM25Retriever.from_documents(valid_docs)
+                self.bm25_retriever = CustomBM25Retriever.from_documents(valid_docs)
                 self.bm25_retriever.k = 8
                 logger.info(f"Índice Léxico BM25 actualizado internamente con {len(valid_docs)} documentos totales.")
                 self._sync_pipeline()

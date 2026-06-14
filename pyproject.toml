@@ -7,7 +7,7 @@ name = "AxiomRAG"
 version = "1.0.0"
 description = "Enterprise RAG MLOps with Hybrid Search and Reranking"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
@@ -28,15 +28,22 @@ dependencies = [
     "langchain-huggingface>=0.0.3",
     "langchain-groq>=0.1.0",
     "rank-bm25>=0.2.2",
-    "ragas>=0.1.7",
+    "ragas>=0.2.0",
     "streamlit>=1.33.0",
-    "datasets>=4.8.4",
+    "datasets>=2.19.0,<3.0.0",
     "pytest>=9.0.3",
     "pytest-mock>=3.14.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.25.0",
     "langgraph>=1.1.6",
     "duckduckgo-search>=8.1.1",
+    "pyarrow==14.0.1",
+    "numpy>=1.26.4,<2.0.0",
+    "langchain-unstructured>=1.0.1",
+    "unstructured>=0.23.1",
+    "openpyxl>=3.1.5",
+    "langchain-text-splitters>=1.1.2",
+    "httpx2>=2.4.0",
 ]
 
 [[tool.uv.index]]
@@ -65,9 +72,4 @@ testpaths = ["tests"]
 markers = [
     "fast: Pruebas unitarias rápidas con Mocks.",
     "integration: Pruebas complejas que requieren GPU o modelos."
-]
-
-filterwarnings = [
-    "ignore::DeprecationWarning:ragas.*",
-    "ignore::DeprecationWarning:langchain.*"
 ]

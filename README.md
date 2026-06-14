@@ -13,14 +13,15 @@ El sistema integra componentes rigurosos para solventar los fallos típicos (alu
 
 - **Aceleración Nativa CUDA:** Inferencia optimizada explícitamente para arquitecturas NVIDIA Ampere empleando CUDA 12.4. Esto permitió reducir la latencia del componente de Re-Ranking logrando tiempos consistentes de `< 500ms` en una RTX 3060.
 - **Recuperación *"Parent-Child"*:** Implementación de separación estricta: Búsqueda focalizada vectorial sobre fragmentos agudos (Hijos Semánticos de 600 tokens) para obtener puntajes de precisión de ~0.95, combinada con la inyección del archivo Global (Padres Completos) al payload del LLM, erradicando el problema de la pérdida de contexto.
-- **Búsqueda Híbrida Ponderada:** Ensamble matemático (50/50 Ensemble) de motor léxico `BM25` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches" en terminología técnica y acrónimos severos.
+- **Búsqueda Híbrida Ponderada:** Ensamble matemático (50/50 Ensemble) de motor léxico `CustomBM25Retriever` (Sparse) y motor vectorial semántico `BGE-M3` (Dense) previniendo "Zero Matches" en terminología técnica y acrónimos severos.
 - **Ingesta Asíncrona (Non-Blocking):** Pipeline encapsulado sobre `FastAPI BackgroundTasks`. Absorbe 289 documentos técnicos persistiendo la evaluación global sin detener el hilo principal ni agotar el Thread Pool de las peticiones HTTP del usuario.
+- **Arquitectura de Bajo Ruido (Warning-Free):** Eliminación total de advertencias de obsolescencia (`DeprecationWarning`) al inyectar stubs para VertexAI y proveer adaptadores nativos libres de `langchain-community`.
 
 ## 📊 Observabilidad y MLOps (Baseline Heurístico)
 
 No se asume el rendimiento; se mide. Operamos auditorías automatizadas contra un **"Golden Dataset"** (batería de pruebas de ingenieros humanos) garantizando que nuestras refactorizaciones no degraden la calidad generativa previniendo cualquier alucinación.
 
-**Línea Base Cuantitativa con Framework `Ragas v0.2+`:**
+**Línea Base Cuantitativa con Framework `Ragas v0.3+`:**
 
 | Métrica MLOps | Score Evaluado | Significado Operativo |
 | :--- | :--- | :--- |
@@ -127,7 +128,7 @@ docker run --rm --gpus all axiomrag:latest python -c "import torch; print(f'CUDA
 
 ## 🧪 Protocolo de Pruebas (MLOps)
 
-El sistema cuenta con una suite de 13 tests automatizados que validan desde la extracción multimodal hasta la fidelidad de las respuestas.
+El sistema cuenta con una suite de 19 tests automatizados que validan desde la extracción multimodal hasta la fidelidad de las respuestas.
 
 ### Ejecución Total en Docker
 Para certificar la imagen antes de un deploy, inyecta tus credenciales de **OpenRouter** mediante el archivo `.env`:

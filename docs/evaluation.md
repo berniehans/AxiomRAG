@@ -1,6 +1,9 @@
 # 📈 Cultura de Datos: Pipeline de Evaluación (Ragas)
 
-En implementaciones serias de RAG Enterprise no basta con "predecir" textos generativos. Implementamos una suite de evaluación heurística con la librería `Ragas v0.2+`, centralizada y envolviendo LangChain con envoltorios oficiales construidos sobre `src.evals.engine`.
+En implementaciones serias de RAG Enterprise no basta con "predecir" textos generativos. Implementamos una suite de evaluación heurística con la librería `Ragas v0.3+`, centralizada y envolviendo LangChain con envoltorios oficiales construidos sobre `src.evals.engine`.
+
+## Stubbing en Importaciones y Silencio de Warnings
+Para prevenir advertencias molestas (`DeprecationWarning`) de obsolescencia de `langchain-community` al instanciar Ragas, inyectamos proactivamente stubs para `langchain_community.chat_models.vertexai` y `langchain_community.llms` directamente en `sys.modules` al inicializar el evaluador.
 
 ## 📐 Métricas Principales
 
@@ -9,7 +12,7 @@ Para testear qué tan bueno es nuestro recuperador y qué tan fiel es nuestra ge
 | Métrica MLOps | Significado Técnico | Tolerancia en Baseline |
 | :--- | :--- | :--- |
 | **Faithfulness (Fidelidad)** | Mide cuantitativamente qué tan apegada es la repuesta contra el contexto original brindado, previniendo alucinación y controlando respuestas inventadas. | `> 0.60` |
-| **Context Precision** | Castiga duramente el ruido en el espacio de representación vectorial. Analiza si los chunks devueltos inyectados fueron oro sólido o simple relleno irrelevante. | `> 0.66` |
+| **Context Precision** | Castiga duramente el ruido en el espacio de representación vectorial. Evaluada a través del estimador moderno **`LLMContextPrecisionWithReference`** (migrado de `ContextPrecision` para evitar advertencias de desuso de `_ascore` en Ragas). Su resultado es mapeado de vuelta a `context_precision` para retro-compatibilidad. | `> 0.66` |
 
 ## 🏆 El "Golden Dataset"
 Nuestra rutina MLOps principal `run_evals.py` cuenta con la dependencia integral orientada a un **Golden Dataset** (Dataset Dorado). Es un sub-grupo compacto de preguntas técnicas y respuestas "Ground Truth" aprobadas por validadores humanos.

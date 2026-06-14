@@ -1,14 +1,12 @@
 import time
 import json
 import asyncio
-from typing import Dict, List, Optional, Any, TypedDict
+from typing import Dict, List, Optional, Any, TypedDict, cast, Type
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
-from langchain_community.tools import DuckDuckGoSearchRun
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -23,13 +21,26 @@ import openai
 
 logger = setup_logger(__name__)
 
+class DuckDuckGoSearchRun:
+    """Wrapper para realizar búsquedas en DuckDuckGo utilizando la biblioteca duckduckgo_search de forma directa."""
+    def run(self, query: str) -> str:
+        from duckduckgo_search import DDGS
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=5))
+                if results:
+                    return " ".join([r.get("body", r.get("snippet", "")) for r in results if r.get("body") or r.get("snippet")])
+        except Exception as e:
+            logger.error(f"Error executing custom DuckDuckGo search: {e}")
+        return "No good DuckDuckGo Search Result was found"
+
 # Memoria global en RAM (Dict Store) para el control de sesiones
 _store = {}
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
     """Invoca o crea la línea de tiempo de mensajes para una sesión particular."""
     if session_id not in _store:
-        _store[session_id] = ChatMessageHistory()
+        _store[session_id] = InMemoryChatMessageHistory()
         logger.info(f"Nueva sesión conversacional iniciada con ID: {session_id}")
     return _store[session_id]
 
@@ -293,7 +304,7 @@ class RAGAgent:
                 "loop_count": loop_count + 1
             }
 
-        workflow = StateGraph(GraphState)
+        workflow = StateGraph(cast(Type[GraphState], GraphState))
         
         workflow.add_node("expand_query", expand_query_node)
         workflow.add_node("retrieve_local", retrieve_local_node)

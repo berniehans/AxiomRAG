@@ -2,12 +2,15 @@
 
 El módulo de Ingesta no solo inserta datos; es una capa de preprocesamiento, limpieza técnica (Data Wrangling), y transformación dimensional. Se destaca el "Auto-Sanado" al contactar LLMs para extraer atributos JSON.
 
-## 1. Semantic Chunking (Fragmentación Recusiva)
+## 1. Semantic Chunking (Fragmentación Semántica Personalizada)
 
-Descartamos el agrupamiento tradicional basado netamente en contadores de palabras y empleamos `RecursiveCharacterTextSplitter` con heurísticas pragmáticas.
+Descartamos el agrupamiento tradicional basado netamente en contadores de palabras y las librerías obsoletas de `langchain-experimental`. En su lugar, implementamos un **`CustomSemanticChunker`** que opera de la siguiente manera:
 
-- **Micro-Matches Dinámicos:** Mantenemos la cohesión sintáctica buscando límites duros (como puntos y aparte, saltos de línea y tabulaciones de listas).
-- **Relaciones Padre-Hijo (Parent Document Paradigm):** Partimos grandes PDFs en fragmentos diminutos (`chunk_size=400`, `chunk_overlap=50`). Estos *micro-chunks* vuelan de forma optimizada hacia nuestra Base Vectorial Qdrant, mientras mantenemos un local file key-store mapeando ese micro-fragmento hacia su macro-documento de origen.
+- **Segmentación de Oraciones:** Divide el texto crudo en oraciones usando expresiones regulares.
+- **Generación de Embeddings:** Calcula representaciones vectoriales para cada oración usando el modelo `BGE-M3` local.
+- **Cálculo de Distancia Cosenoidal:** Mide la distancia de coseno entre oraciones adyacentes para evaluar la continuidad del flujo semántico.
+- **Detección de Puntos de Quiebre (Breakpoints):** Utiliza gradientes numéricos (`numpy.gradient`) o percentiles dinámicos para identificar variaciones bruscas en el significado y segmentar el texto en párrafos semánticamente autónomos.
+- **Relaciones Padre-Hijo (Parent Document Paradigm):** El pipeline final de indexación (`ParentDocumentRetriever`) asocia estas secciones a fragmentos hijos menores (`chunk_size=600`, `chunk_overlap=50` en el splitter secundario), los cuales se indexan en Qdrant, mientras que el documento padre enriquecido semánticamente se conserva íntegro en el File Store local.
 
 ## 2. Metadata Extraction con Auto-Healing (Pydantic)
 

@@ -1,7 +1,8 @@
 import os
+import pypdf
 from typing import List
 from langchain_core.documents import Document
-from langchain_community.document_loaders import PyPDFLoader, UnstructuredExcelLoader
+from langchain_unstructured import UnstructuredLoader
 from src.utils.logging_config import setup_logger
 from src.exceptions import IngestionError
 
@@ -19,8 +20,14 @@ class MultimodalParser:
         """Extrae texto de un PDF utilizando pypdf nativo de Python para garantizar portabilidad sin Poppler."""
         logger.info(f"Parsing PDF: {file_path}")
         try:
-            loader = PyPDFLoader(file_path)
-            docs = loader.load()
+            reader = pypdf.PdfReader(file_path)
+            docs = []
+            for page_num, page in enumerate(reader.pages):
+                text = page.extract_text() or ""
+                docs.append(Document(
+                    page_content=text,
+                    metadata={"source": file_path, "page": page_num}
+                ))
             return docs
         except Exception as e:
             logger.error(f"Error parseando PDF {file_path}: {str(e)}")
@@ -30,8 +37,8 @@ class MultimodalParser:
         """Extrae texto de Excel usando unstructured para preservar filas completas."""
         logger.info(f"Parsing Excel: {file_path}")
         try:
-            # Pasamos ISO codes multilingües para estructuración base
-            loader = UnstructuredExcelLoader(file_path, languages=["spa", "eng"], mode="single")
+            # Usamos UnstructuredLoader de la nueva integración oficial langchain-unstructured
+            loader = UnstructuredLoader(file_path, mode="single", languages=["spa", "eng"])
             docs = loader.load()
             return docs
         except Exception as e:
